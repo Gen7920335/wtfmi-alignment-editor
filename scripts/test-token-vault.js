@@ -1,31 +1,21 @@
 const fs = require('fs');
 const path = require('path');
-const { webcrypto } = require('crypto');
 
-const source = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
-const start = source.indexOf('  async function createEncryptedTokenVault');
-const end = source.indexOf('  function githubApiUrl', start);
-if (start < 0 || end < 0) throw new Error('Token vault functions not found');
+const root = path.join(__dirname, '..');
+const vaultText = fs.readFileSync(path.join(root, 'config', 'token-vault.json'), 'utf8');
+const vault = JSON.parse(vaultText);
+const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
+const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 
-const factory = new Function('crypto', 'TOKEN_VAULT', 'TextEncoder', 'TextDecoder', 'btoa', 'atob', `
-${source.slice(start, end)}
-return { createEncryptedTokenVault, decryptTokenVault };
-`);
-const api = factory(webcrypto, {
-  storageKey: 'test', schema: 'wtfmi-encrypted-github-token-v2',
-  passwordLength: 10, randomKeyLength: 47, pbkdf2Iterations: 600000
-}, TextEncoder, TextDecoder, btoa, atob);
-
-(async () => {
-  const token = 'github_pat_test_token_not_a_real_credential';
-  const password = 'A1b2C3d4E5';
-  const vault = await api.createEncryptedTokenVault(token, password);
-  const serialized = JSON.stringify(vault);
-  if (vault.randomKeyLength !== 47) throw new Error('Random key length metadata mismatch');
-  if (serialized.includes(token) || serialized.includes(password)) throw new Error('Plaintext leaked into vault');
-  if (await api.decryptTokenVault(vault, password) !== token) throw new Error('Round-trip failed');
-  let wrongPasswordRejected = false;
-  try { await api.decryptTokenVault(vault, 'Z9y8X7w6V5'); } catch { wrongPasswordRejected = true; }
-  if (!wrongPasswordRejected) throw new Error('Wrong password was accepted');
-  console.log('Token vault passed: AES-256-GCM, 47-char random key, exact round-trip, wrong-password rejection');
-})().catch(error => { console.error(error); process.exitCode = 1; });
+if (vault.schema !== 'wtfmi-encrypted-github-token-v2') throw new Error('Unexpected vault schema');
+if (vault.algorithm !== 'AES-256-GCM') throw new Error('Unexpected vault algorithm');
+if (vault.passwordLength !== 10) throw new Error('Password length metadata mismatch');
+if (vault.randomKeyLength !== 47) throw new Error('Random key length metadata mismatch');
+if (vault.kdf?.iterations !== 600000) throw new Error('PBKDF2 iteration mismatch');
+if (!vault.wrappedKey?.ciphertext || !vault.token?.ciphertext) throw new Error('Ciphertext is missing');
+if (/github_pat_|ghp_|gho_/i.test(vaultText)) throw new Error('Plaintext credential leaked into the vault');
+for (const removedId of ['githubTokenSetup', 'githubTokenInput', 'githubPasswordConfirmInput', 'githubEncryptTokenButton', 'githubExportTokenButton', 'githubImportTokenInput']) {
+  if (html.includes(removedId) || app.includes(removedId)) throw new Error(`Removed setup control remains: ${removedId}`);
+}
+if (!app.includes("fetch('./config/token-vault.json'")) throw new Error('Hosted vault loader is missing');
+console.log('Hosted vault passed: encrypted payload only, 47-char key metadata, 10-char password metadata, no setup UI');

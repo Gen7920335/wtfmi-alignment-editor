@@ -79,12 +79,6 @@ button.drawing { color: #061015; background: var(--amber); border-color: var(--a
 .token-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
 .token-actions button { padding: 5px; }
 .github-sync-panel .clear-token { color: #ffbdc7; border-color: #713240; }
-.token-setup { margin-top: 7px; padding: 6px; border: 1px solid #514b31; border-radius: 4px; }
-.token-setup summary { color: #d9cda1; cursor: pointer; }
-.token-setup label { margin-top: 6px; grid-template-columns: 76px 1fr; }
-.token-setup > button { width: 100%; margin-top: 7px; }
-.token-transfer-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
-.token-transfer-actions button, .token-transfer-actions .file-button { padding: 5px; font-size: 11px; text-align: center; }
 .sync-status { margin-bottom: 7px; padding: 6px 7px; color: #d9cda1; background: #0d0c08; border-radius: 4px; font-size: 11px; }
 .sync-status.busy { color: var(--cyan); }
 .sync-status.error { color: #ff9dad; }

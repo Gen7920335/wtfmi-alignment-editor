@@ -1,0 +1,21 @@
+{
+  "schema": "wtfmi-encrypted-github-token-v2",
+  "createdAt": "2026-08-18T23:01:14.912Z",
+  "algorithm": "AES-256-GCM",
+  "passwordLength": 10,
+  "randomKeyLength": 47,
+  "kdf": {
+    "name": "PBKDF2",
+    "hash": "SHA-256",
+    "iterations": 600000,
+    "salt": "3066MTLg/MnxPHB68pjWzQ=="
+  },
+  "wrappedKey": {
+    "iv": "P2Xn5nkmzT2qWNqP",
+    "ciphertext": "vdBRtaeUIkMAM/QnVJiB4/WSkCsqNvVSM8CWkQtTfYASDzWaKSgc7fFlpOvDqLO/z4JHLphOhhcBHFlf/F6n"
+  },
+  "token": {
+    "iv": "gSaI/AbeXXwyq4Ts",
+    "ciphertext": "I3UNLZ0d6pT/iQswGwayuEd91ZIEnZ3haAaDu+XFH/+KCfeYGc19z7cUErbl5uOd/9w8kfXqfM8="
+  }
+}

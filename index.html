@@ -64,20 +64,10 @@
             <button id="githubSaveButton" class="primary" type="button">GitHub에 저장</button>
           </div>
           <div class="token-actions">
-            <button id="githubUnlockButton" type="button">비밀번호 확인</button>
+            <button id="githubUnlockButton" type="button">잠금 해제</button>
             <button id="githubLockButton" class="clear-token" type="button">잠금</button>
           </div>
-          <details id="githubTokenSetup" class="token-setup">
-            <summary>초기 토큰 등록 / 교체</summary>
-            <label>토큰 <input id="githubTokenInput" type="password" autocomplete="off" placeholder="fine-grained token"></label>
-            <label>비밀번호 확인 <input id="githubPasswordConfirmInput" type="password" autocomplete="new-password" minlength="10" maxlength="10"></label>
-            <button id="githubEncryptTokenButton" class="primary" type="button">토큰 암호화 저장</button>
-            <div class="token-transfer-actions">
-              <button id="githubExportTokenButton" type="button">암호화 설정 내보내기</button>
-              <label class="file-button">암호화 설정 불러오기<input id="githubImportTokenInput" type="file" accept="application/json"></label>
-            </div>
-          </details>
-          <p class="hint">비공개 저장소: <code>Gen7920335/wtfmi-alignment-data</code><br>47자리 난수 키로 토큰을 AES-256-GCM 암호화하고, 난수 키는 10자리 비밀번호로 다시 잠긁니다. 비밀번호 원문은 저장하지 않습니다.</p>
+          <p class="hint">비공개 저장소: <code>Gen7920335/wtfmi-alignment-data</code><br>47자리 난수 키로 암호화된 동기화 자격 증명을 10자리 비밀번호로 해제합니다. 비밀번호와 평문 자격 증명은 저장하지 않습니다.</p>
         </section>
         <section id="customRegionEditor" class="custom-region-editor" hidden>
           <h3>집 / 분리 도면 구역</h3>
