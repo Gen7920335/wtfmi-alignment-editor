@@ -273,20 +273,22 @@
 
   function floorMarkers() {
     const markers = (state.battlePassData?.maps?.[state.map] || []).filter(marker => marker.excluded !== true);
+    const custom = customRegionDefinitions();
+    const withoutCustomOwner = marker => !custom.some(item => insideRegion(markerSourcePixel(marker), item));
+    const customFloorMarkers = markers.filter(marker => custom.some(item => item.floorId === state.floor && insideRegion(markerSourcePixel(marker), item)));
+    let regularFloorMarkers;
     if (state.map === 'lighthouse') {
-      const custom = customRegionDefinitions();
-      return markers.filter(marker => {
-        const source = markerSourcePixel(marker);
-        const owner = custom.find(item => insideRegion(source, item));
-        return owner ? owner.floorId === state.floor : state.floor === 'main';
-      });
+      regularFloorMarkers = state.floor === 'main' ? markers.filter(withoutCustomOwner) : [];
+    } else {
+      const regions = currentFloor().regions;
+      if (regions?.length) {
+        regularFloorMarkers = markers.filter(marker => regions.some(item => insideBounds(markerSourcePixel(marker), item.sourceBounds)) && withoutCustomOwner(marker));
+      } else {
+        const floors = currentFloor().markerFloors;
+        regularFloorMarkers = markers.filter(marker => (floors === '*' || floors.includes(Number(marker.floor))) && withoutCustomOwner(marker));
+      }
     }
-    const regions = currentFloor().regions;
-    if (regions?.length) {
-      return markers.filter(marker => regions.some(item => insideBounds(markerSourcePixel(marker), item.sourceBounds)));
-    }
-    const floors = currentFloor().markerFloors;
-    return floors === '*' ? markers : markers.filter(marker => floors.includes(Number(marker.floor)));
+    return [...regularFloorMarkers, ...customFloorMarkers];
   }
 
   function regionDefinitions() {
@@ -354,12 +356,11 @@
   }
 
   function toggleRegionDrawMode() {
-    if (state.map !== 'lighthouse') return;
     state.regionDrawMode = !state.regionDrawMode;
     state.regionDraft = null;
     state.pendingSource = null;
     updateUi(); renderAll();
-    if (state.regionDrawMode) toast('왼쪽 원본 지도에서 집/분리 도면을 드래그하세요.');
+    if (state.regionDrawMode) toast('왼쪽 원본 지도에서 사용자 지정 구역을 드래그하세요.');
   }
 
   function finishCustomRegion(start, end) {
@@ -369,13 +370,13 @@
     }
     const geometry = geometryFromBounds(bounds);
     const overlaps = customRegionDefinitions().some(item => rotatedRectanglesOverlap(geometry, item.geometry));
-    if (overlaps) { toast('기존 집 사각형과 겹칠 수 없습니다. 경계를 다시 지정하세요.', true); return; }
+    if (overlaps) { toast('기존 사용자 지정 사각형과 겹칠 수 없습니다. 경계를 다시 지정하세요.', true); return; }
     const list = state.customRegions[state.map] ||= [];
-    const id = `lighthouse-house-${Date.now().toString(36)}`;
+    const id = `${state.map}-region-${Date.now().toString(36)}`;
     const displayIndex = Math.max(0, ...list.map(regionItem => Number(regionItem.displayIndex) || 0)) + 1;
     const usedColors = new Set(list.map(regionItem => Number(regionItem.colorIndex) || 0));
     let colorIndex = 0; while (usedColors.has(colorIndex)) colorIndex += 1;
-    const item = { id, label: `집 구역 ${displayIndex}`, displayIndex, colorIndex, floorId: state.floor, geometry, sourceBounds: bounds.map(round3), targetBounds: null, createdAt: new Date().toISOString() };
+    const item = { id, label: `사용자 구역 ${displayIndex}`, displayIndex, colorIndex, floorId: state.floor, geometry, sourceBounds: bounds.map(round3), targetBounds: null, createdAt: new Date().toISOString() };
     list.push(item);
     persistCustomRegions();
     state.region = id; state.regionDrawMode = false; state.regionDraft = null;
@@ -480,7 +481,7 @@
   function invalidRegionGeometry(item) {
     if (rotatedCorners(item.geometry).some(point => !insideImage(point, state.sourceImage))) return '사각형이 원본 지도 밖으로 나갈 수 없습니다.';
     const overlap = customRegionDefinitions().some(other => other.id !== item.id && rotatedRectanglesOverlap(item.geometry, other.geometry));
-    return overlap ? '다른 집 사각형과 겹칠 수 없습니다.' : null;
+    return overlap ? '다른 사용자 지정 사각형과 겹칠 수 없습니다.' : null;
   }
 
   function setPointMode(mode) {
@@ -495,7 +496,7 @@
   function handlePointClick(side, point) {
     if (side === 'overlay') return;
     if (currentRegion()?.placeholder) {
-      toast('이 층에 집 사각형을 먼저 추가하세요.', true);
+      toast('이 층에 사용자 지정 사각형을 먼저 추가하세요.', true);
       return;
     }
     const image = side === 'source' ? state.sourceImage : state.targetImage;
@@ -509,7 +510,7 @@
       return;
     }
     if (side === 'source' && currentRegion()?.custom && !insideRegion(point, currentRegion())) {
-      toast('회전된 현재 집 사각형 밖에는 점을 만들 수 없습니다.', true);
+      toast('회전된 현재 사용자 지정 사각형 밖에는 점을 만들 수 없습니다.', true);
       return;
     }
     if (side === 'source') {
@@ -693,7 +694,6 @@
   }
 
   function drawRegionLayer(ctx, viewer) {
-    if (state.map !== 'lighthouse') return;
     ctx.save();
     ctx.setLineDash([7, 5]);
     for (const item of customRegionDefinitions()) {
@@ -1010,9 +1010,9 @@
     $('targetBadge').textContent = `${state.targetImage?.naturalWidth || 0} × ${state.targetImage?.naturalHeight || 0}`;
     $('overlayBadge').textContent = `${state.region} · 기준점 ${registration.controls.length} · 삼각형 ${registration.triangles.length}`;
     const addRegionButton = $('addRegionButton');
-    addRegionButton.hidden = state.map !== 'lighthouse';
+    addRegionButton.hidden = false;
     addRegionButton.classList.toggle('drawing', state.regionDrawMode);
-    addRegionButton.textContent = state.regionDrawMode ? '사각형 지정 취소' : '집 사각형 추가';
+    addRegionButton.textContent = state.regionDrawMode ? '사각형 지정 취소' : '구역 사각형 추가';
     const regionItem = currentRegion();
     const editor = $('customRegionEditor');
     editor.hidden = !regionItem?.custom;
