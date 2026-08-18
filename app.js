@@ -2,7 +2,7 @@
   'use strict';
 
   const GITHUB_SYNC = {
-    owner: 'Gen7920335', repo: 'wtfmi-alignment-editor', branch: 'main', path: 'data/alignment-state.json',
+    owner: 'Gen7920335', repo: 'wtfmi-alignment-data', branch: 'main', path: 'alignment-state.json',
     apiVersion: '2026-03-10'
   };
 
@@ -126,7 +126,6 @@
   async function initialize() {
     for (const [key, config] of Object.entries(MAPS)) $('mapSelect').add(new Option(config.label, key));
     bindUi();
-    $('githubTokenInput').value = sessionStorage.getItem('wtfmi-github-token') || '';
     try {
       const response = await fetch('./data/battle-pass-locations.json', { cache: 'no-store' });
       state.battlePassData = response.ok ? await response.json() : null;
@@ -140,12 +139,12 @@
     $('mapSelect').addEventListener('change', event => switchMap(event.target.value));
     $('floorSelect').addEventListener('change', event => switchFloor(event.target.value));
     $('regionSelect').addEventListener('change', event => switchRegion(event.target.value));
-    $('githubTokenInput').addEventListener('input', event => {
-      const token = event.target.value.trim();
-      if (token) sessionStorage.setItem('wtfmi-github-token', token); else sessionStorage.removeItem('wtfmi-github-token');
-    });
     $('githubLoadButton').addEventListener('click', loadStateFromGithub);
     $('githubSaveButton').addEventListener('click', saveStateToGithub);
+    $('githubClearTokenButton').addEventListener('click', () => {
+      $('githubTokenInput').value = '';
+      setGithubSyncStatus('토큰을 메모리에서 삭제했습니다.');
+    });
     $('addRegionButton').addEventListener('click', toggleRegionDrawMode);
     $('regionNameInput').addEventListener('change', renameCurrentRegion);
     $('regionFloorSelect').addEventListener('change', event => changeCurrentRegionFloor(event.target.value));
@@ -1201,6 +1200,21 @@
       return value.message || `${response.status} ${response.statusText}`;
     } catch { return `${response.status} ${response.statusText}`; }
   }
+  function requireGithubToken() {
+    if (githubToken()) return true;
+    setGithubSyncStatus('비공개 데이터를 불러오거나 저장하려면 GitHub 토큰이 필요합니다.', 'error');
+    $('githubTokenInput').focus();
+    return false;
+  }
+  async function verifyGithubIdentity() {
+    const response = await fetch('https://api.github.com/user', { headers: githubHeaders(true), cache: 'no-store' });
+    if (!response.ok) throw new Error(await githubError(response));
+    const user = await response.json();
+    if (String(user.login).toLowerCase() !== GITHUB_SYNC.owner.toLowerCase()) {
+      throw new Error(`허용되지 않은 GitHub 계정: ${user.login}`);
+    }
+    return user;
+  }
   async function getGithubStateFile() {
     const response = await fetch(`${githubApiUrl()}?ref=${encodeURIComponent(GITHUB_SYNC.branch)}&t=${Date.now()}`, {
       headers: githubHeaders(true), cache: 'no-store'
@@ -1212,9 +1226,11 @@
     return { file, statePayload };
   }
   async function loadStateFromGithub() {
+    if (!requireGithubToken()) return;
     if (!window.confirm('GitHub에 저장된 상태로 현재 브라우저의 전체 정합 상태를 교체할까요?')) return;
     setGithubSyncStatus('GitHub에서 불러오는 중…', 'busy');
     try {
+      await verifyGithubIdentity();
       const result = await getGithubStateFile();
       if (!result) throw new Error('아직 GitHub에 저장된 정합 상태가 없습니다.');
       const payload = result.statePayload;
@@ -1235,15 +1251,12 @@
     }
   }
   async function saveStateToGithub() {
-    if (!githubToken()) {
-      setGithubSyncStatus('저장하려면 Contents 쓰기 권한의 GitHub 토큰을 입력하세요.', 'error');
-      $('githubTokenInput').focus();
-      return;
-    }
+    if (!requireGithubToken()) return;
     if (!window.confirm('GitHub 저장소에 현재 전체 정합 상태를 커밋할까요?')) return;
     persistCurrent();
     setGithubSyncStatus('GitHub에 저장하는 중…', 'busy');
     try {
+      await verifyGithubIdentity();
       const existing = await getGithubStateFile();
       const payload = {
         schema: 'wtfmi-alignment-cloud-state-v1', savedAt: new Date().toISOString(),

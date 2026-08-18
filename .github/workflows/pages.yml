@@ -3,8 +3,6 @@ name: Deploy alignment editor to GitHub Pages
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - data/alignment-state.json
   workflow_dispatch:
 
 permissions:
