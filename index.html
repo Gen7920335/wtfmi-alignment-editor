@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WTFMI Map Alignment Editor</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <strong>WTFMI ALIGNMENT EDITOR</strong>
+      <span>원본 앱 ↔ WTFMI 구역별 좌표 정합</span>
+    </div>
+    <label>맵<select id="mapSelect"></select></label>
+    <label>층/패널<select id="floorSelect"></select></label>
+    <label>정합 구역<select id="regionSelect"></select></label>
+    <button id="addRegionButton" class="region-only" type="button" hidden>집 사각형 추가</button>
+    <label>모델
+      <select id="modelSelect">
+        <option value="piecewise">Piecewise Affine</option>
+        <option value="similarity">Similarity</option>
+        <option value="affine">Global Affine</option>
+      </select>
+    </label>
+    <div class="segmented" aria-label="점 종류">
+      <button id="controlMode" class="active" type="button">기준점</button>
+      <button id="validationMode" type="button">검증점</button>
+    </div>
+    <label class="range">오버레이 <input id="opacityRange" type="range" min="0" max="100" value="50"><output id="opacityOutput">50%</output></label>
+    <button id="fitAllButton" type="button">전체 맞춤</button>
+    <button id="fitRegionButton" type="button">구역 맞춤</button>
+    <button id="undoButton" type="button">실행 취소</button>
+    <button id="clearButton" class="danger" type="button">현재 점 삭제</button>
+  </header>
+
+  <main>
+    <section class="viewer-grid">
+      <article class="viewer-card">
+        <div class="viewer-title"><strong>1. 원본 앱 지도</strong><span>먼저 동일 지점을 클릭</span></div>
+        <div class="canvas-wrap"><canvas id="sourceCanvas"></canvas><div class="canvas-badge" id="sourceBadge">대기</div></div>
+      </article>
+      <article class="viewer-card">
+        <div class="viewer-title"><strong>2. WTFMI 지도</strong><span>같은 지점을 클릭해 쌍 완성</span></div>
+        <div class="canvas-wrap"><canvas id="targetCanvas"></canvas><div class="canvas-badge" id="targetBadge">대기</div></div>
+      </article>
+      <article class="viewer-card">
+        <div class="viewer-title"><strong>3. 원본 기준 오버레이</strong><span>삼각망 밖은 보정하지 않음</span></div>
+        <div class="canvas-wrap"><canvas id="overlayCanvas"></canvas><div class="canvas-badge" id="overlayBadge">기준점 0</div></div>
+      </article>
+    </section>
+
+    <section class="workbench">
+      <aside class="stats-panel">
+        <h2>검증 상태</h2>
+        <section class="github-sync-panel">
+          <h3>GitHub 동기화</h3>
+          <div id="githubSyncStatus" class="sync-status">로컬 자동 저장 상태</div>
+          <label>토큰 <input id="githubTokenInput" type="password" autocomplete="off" placeholder="fine-grained token"></label>
+          <div class="sync-actions">
+            <button id="githubLoadButton" type="button">GitHub에서 불러오기</button>
+            <button id="githubSaveButton" class="primary" type="button">GitHub에 저장</button>
+          </div>
+          <p class="hint">저장소: <code>Gen7920335/wtfmi-alignment-editor</code><br>토큰은 현재 탭에만 유지됩니다. 저장에는 해당 저장소의 Contents 쓰기 권한이 필요합니다.</p>
+        </section>
+        <section id="customRegionEditor" class="custom-region-editor" hidden>
+          <h3>집 / 분리 도면 구역</h3>
+          <label>이름 <input id="regionNameInput" type="text" maxlength="60"></label>
+          <label>층 <select id="regionFloorSelect"></select></label>
+          <button id="deleteRegionButton" class="danger" type="button">이 사각형 삭제</button>
+          <p class="hint">사각형 안의 마커는 지정한 층에만 귀속됩니다. 원본 지도의 「대각 1」·「대각 2」 핸들을 끌어 회전과 크기를 조정하세요.</p>
+        </section>
+        <div id="statusGrid" class="status-grid"></div>
+        <div id="warnings" class="warnings"></div>
+        <label class="check"><input id="showTriangles" type="checkbox" checked> 삼각망 표시</label>
+        <label class="check"><input id="showMarkers" type="checkbox" checked> 배틀패스 마커 미리보기</label>
+        <label class="check"><input id="allowGlobalFallback" type="checkbox"> 삼각망 밖 전역 변환 허용 (현재 구역 내부만)</label>
+        <p class="hint">마우스 휠: 확대/축소 · 가운데 버튼 또는 Space+드래그: 이동 · 점 드래그: 위치 수정</p>
+      </aside>
+
+      <section class="point-panel">
+        <div class="panel-heading">
+          <div><h2>대응점</h2><span id="pendingText">원본 지도에서 첫 점을 찍으세요.</span></div>
+          <div class="file-actions">
+            <button id="saveProjectButton" type="button">프로젝트 저장</button>
+            <label class="file-button">프로젝트 불러오기<input id="loadProjectInput" type="file" accept="application/json"></label>
+            <button id="exportCandidatesButton" class="primary" type="button">후보 좌표 내보내기</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>#</th><th>종류</th><th>이름</th><th>원본 X,Y</th><th>WTFMI X,Y</th><th>검증오차</th><th></th></tr></thead>
+            <tbody id="pointTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="./app.js"></script>
+</body>
+</html>
