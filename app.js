@@ -5,6 +5,11 @@
     owner: 'Gen7920335', repo: 'wtfmi-alignment-data', branch: 'main', path: 'alignment-state.json',
     apiVersion: '2026-03-10'
   };
+  const TOKEN_VAULT = {
+    storageKey: 'wtfmi-encrypted-github-token-v2', schema: 'wtfmi-encrypted-github-token-v2',
+    passwordLength: 10, randomKeyLength: 47, pbkdf2Iterations: 600000
+  };
+  let unlockedGithubToken = '';
 
   const MAPS = {
     customs: {
@@ -126,6 +131,7 @@
   async function initialize() {
     for (const [key, config] of Object.entries(MAPS)) $('mapSelect').add(new Option(config.label, key));
     bindUi();
+    updateTokenVaultUi();
     try {
       const response = await fetch('./data/battle-pass-locations.json', { cache: 'no-store' });
       state.battlePassData = response.ok ? await response.json() : null;
@@ -141,13 +147,12 @@
     $('regionSelect').addEventListener('change', event => switchRegion(event.target.value));
     $('githubLoadButton').addEventListener('click', loadStateFromGithub);
     $('githubSaveButton').addEventListener('click', saveStateToGithub);
-    $('githubValidateTokenButton').addEventListener('click', validateGithubToken);
-    $('githubTokenInput').addEventListener('input', () => setGithubSyncStatus('토큰 검증이 필요합니다.'));
-    $('githubTokenInput').addEventListener('paste', () => setTimeout(validateGithubToken, 0));
-    $('githubClearTokenButton').addEventListener('click', () => {
-      $('githubTokenInput').value = '';
-      setGithubSyncStatus('토큰을 메모리에서 삭제했습니다.');
-    });
+    $('githubUnlockButton').addEventListener('click', unlockGithubToken);
+    $('githubPasswordInput').addEventListener('keydown', event => { if (event.key === 'Enter') unlockGithubToken(); });
+    $('githubLockButton').addEventListener('click', lockGithubToken);
+    $('githubEncryptTokenButton').addEventListener('click', encryptAndStoreGithubToken);
+    $('githubExportTokenButton').addEventListener('click', exportEncryptedTokenVault);
+    $('githubImportTokenInput').addEventListener('change', importEncryptedTokenVault);
     $('addRegionButton').addEventListener('click', toggleRegionDrawMode);
     $('regionNameInput').addEventListener('change', renameCurrentRegion);
     $('regionFloorSelect').addEventListener('change', event => changeCurrentRegionFloor(event.target.value));
@@ -1176,7 +1181,136 @@
     } catch { return {}; }
   }
 
-  function githubToken() { return $('githubTokenInput').value.trim(); }
+  function githubToken() { return unlockedGithubToken; }
+  function encryptedTokenVault() {
+    try {
+      const value = JSON.parse(localStorage.getItem(TOKEN_VAULT.storageKey) || 'null');
+      return value?.schema === TOKEN_VAULT.schema ? value : null;
+    } catch { return null; }
+  }
+  function updateTokenVaultUi() {
+    const stored = Boolean(encryptedTokenVault());
+    $('githubTokenSetup').open = !stored;
+    $('githubExportTokenButton').disabled = !stored;
+    if (unlockedGithubToken) setGithubSyncStatus('암호화 토큰 잠금 해제됨');
+    else if (stored) setGithubSyncStatus('10자리 비밀번호를 입력해 잠금을 해제하세요.');
+    else setGithubSyncStatus('초기 토큰과 10자리 비밀번호를 등록하세요.');
+  }
+  function validVaultPassword(password) { return Array.from(password).length === TOKEN_VAULT.passwordLength; }
+  async function encryptAndStoreGithubToken() {
+    const token = $('githubTokenInput').value.trim();
+    const password = $('githubPasswordInput').value;
+    const confirmation = $('githubPasswordConfirmInput').value;
+    if (!token) { toast('GitHub 토큰을 입력하세요.', true); return; }
+    if (!validVaultPassword(password)) { toast('비밀번호는 정확히 10자리여야 합니다.', true); return; }
+    if (password !== confirmation) { toast('비밀번호 확인이 일치하지 않습니다.', true); return; }
+    unlockedGithubToken = token;
+    if (!await validateGithubToken()) { unlockedGithubToken = ''; return; }
+    try {
+      setGithubSyncStatus('47자리 난수 키로 토큰을 암호화하는 중…', 'busy');
+      const vault = await createEncryptedTokenVault(token, password);
+      localStorage.setItem(TOKEN_VAULT.storageKey, JSON.stringify(vault));
+      $('githubTokenInput').value = '';
+      $('githubPasswordConfirmInput').value = '';
+      $('githubPasswordInput').value = '';
+      $('githubTokenSetup').open = false;
+      updateTokenVaultUi();
+      toast('토큰을 암호화해 이 기기에 저장했습니다.');
+    } catch (error) {
+      unlockedGithubToken = '';
+      setGithubSyncStatus(`토큰 암호화 실패 · ${error.message}`, 'error');
+    }
+  }
+  async function unlockGithubToken() {
+    const vault = encryptedTokenVault();
+    if (!vault) { $('githubTokenSetup').open = true; toast('암호화된 토큰을 먼저 등록하세요.', true); return; }
+    const password = $('githubPasswordInput').value;
+    if (!validVaultPassword(password)) { toast('비밀번호 10자리를 입력하세요.', true); return; }
+    setGithubSyncStatus('암호화 토큰을 푸는 중…', 'busy');
+    try {
+      unlockedGithubToken = await decryptTokenVault(vault, password);
+      $('githubPasswordInput').value = '';
+      if (!await validateGithubToken()) { unlockedGithubToken = ''; return; }
+    } catch {
+      unlockedGithubToken = '';
+      setGithubSyncStatus('잠금 해제 실패 · 비밀번호가 틀리거나 설정 파일이 손상됐습니다.', 'error');
+      toast('비밀번호를 확인하세요.', true);
+    }
+  }
+  function lockGithubToken() {
+    unlockedGithubToken = '';
+    $('githubTokenInput').value = '';
+    $('githubPasswordInput').value = '';
+    $('githubPasswordConfirmInput').value = '';
+    updateTokenVaultUi();
+    toast('복호화된 토큰을 메모리에서 제거했습니다.');
+  }
+  function exportEncryptedTokenVault() {
+    const vault = encryptedTokenVault();
+    if (!vault) { toast('내보낼 암호화 설정이 없습니다.', true); return; }
+    downloadJson('wtfmi-github-token.encrypted.json', vault);
+    toast('암호화 설정을 내보냈습니다.');
+  }
+  async function importEncryptedTokenVault(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      const vault = JSON.parse(await file.text());
+      if (vault.schema !== TOKEN_VAULT.schema || !vault.wrappedKey?.ciphertext || !vault.token?.ciphertext) throw new Error('잘못된 설정 파일');
+      localStorage.setItem(TOKEN_VAULT.storageKey, JSON.stringify(vault));
+      lockGithubToken(); updateTokenVaultUi();
+      toast('암호화 설정을 불러왔습니다. 10자리 비밀번호로 풀어주세요.');
+    } catch (error) { toast(`설정 불러오기 실패: ${error.message}`, true); }
+  }
+  async function createEncryptedTokenVault(token, password) {
+    const randomKey = createRandomString(TOKEN_VAULT.randomKeyLength);
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const wrapIv = crypto.getRandomValues(new Uint8Array(12));
+    const tokenIv = crypto.getRandomValues(new Uint8Array(12));
+    const passwordKey = await derivePasswordAesKey(password, salt);
+    const tokenKey = await deriveRandomTokenKey(randomKey);
+    const wrappedKey = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: wrapIv }, passwordKey, new TextEncoder().encode(randomKey));
+    const encryptedToken = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: tokenIv }, tokenKey, new TextEncoder().encode(token));
+    return {
+      schema: TOKEN_VAULT.schema, createdAt: new Date().toISOString(), algorithm: 'AES-256-GCM',
+      passwordLength: TOKEN_VAULT.passwordLength, randomKeyLength: TOKEN_VAULT.randomKeyLength,
+      kdf: { name: 'PBKDF2', hash: 'SHA-256', iterations: TOKEN_VAULT.pbkdf2Iterations, salt: bytesToBase64(salt) },
+      wrappedKey: { iv: bytesToBase64(wrapIv), ciphertext: bytesToBase64(new Uint8Array(wrappedKey)) },
+      token: { iv: bytesToBase64(tokenIv), ciphertext: bytesToBase64(new Uint8Array(encryptedToken)) }
+    };
+  }
+  async function decryptTokenVault(vault, password) {
+    const passwordKey = await derivePasswordAesKey(password, base64ToBytes(vault.kdf.salt), Number(vault.kdf.iterations));
+    const randomKeyBytes = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: base64ToBytes(vault.wrappedKey.iv) }, passwordKey, base64ToBytes(vault.wrappedKey.ciphertext));
+    const randomKey = new TextDecoder().decode(randomKeyBytes);
+    if (Array.from(randomKey).length !== TOKEN_VAULT.randomKeyLength) throw new Error('난수 키 길이 불일치');
+    const tokenKey = await deriveRandomTokenKey(randomKey);
+    const tokenBytes = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: base64ToBytes(vault.token.iv) }, tokenKey, base64ToBytes(vault.token.ciphertext));
+    return new TextDecoder().decode(tokenBytes);
+  }
+  async function derivePasswordAesKey(password, salt, iterations = TOKEN_VAULT.pbkdf2Iterations) {
+    const material = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
+    return crypto.subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations }, material, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  }
+  async function deriveRandomTokenKey(randomKey) {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(randomKey));
+    return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+  }
+  function createRandomString(length) {
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    const bytes = crypto.getRandomValues(new Uint8Array(length));
+    return [...bytes].map(value => alphabet[value % alphabet.length]).join('');
+  }
+  function bytesToBase64(bytes) {
+    let binary = '';
+    for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+    return btoa(binary);
+  }
+  function base64ToBytes(value) {
+    const binary = atob(String(value).replace(/\s/g, ''));
+    return Uint8Array.from(binary, character => character.charCodeAt(0));
+  }
   function githubApiUrl() {
     return `https://api.github.com/repos/${GITHUB_SYNC.owner}/${GITHUB_SYNC.repo}/contents/${GITHUB_SYNC.path}`;
   }
@@ -1196,7 +1330,8 @@
     const busy = mode === 'busy';
     $('githubLoadButton').disabled = busy;
     $('githubSaveButton').disabled = busy;
-    $('githubValidateTokenButton').disabled = busy;
+    $('githubUnlockButton').disabled = busy;
+    $('githubEncryptTokenButton').disabled = busy;
   }
   async function githubError(response) {
     try {
@@ -1206,8 +1341,8 @@
   }
   function requireGithubToken() {
     if (githubToken()) return true;
-    setGithubSyncStatus('비공개 데이터를 불러오거나 저장하려면 GitHub 토큰이 필요합니다.', 'error');
-    $('githubTokenInput').focus();
+    setGithubSyncStatus('10자리 비밀번호로 토큰 잠금을 먼저 해제하세요.', 'error');
+    $('githubPasswordInput').focus();
     return false;
   }
   async function verifyGithubIdentity() {
