@@ -1213,13 +1213,20 @@
     if (String(user.login).toLowerCase() !== GITHUB_SYNC.owner.toLowerCase()) {
       throw new Error(`허용되지 않은 GitHub 계정: ${user.login}`);
     }
+    const repositoryResponse = await fetch(`https://api.github.com/repos/${GITHUB_SYNC.owner}/${GITHUB_SYNC.repo}`, {
+      headers: githubHeaders(true), cache: 'no-store'
+    });
+    if (repositoryResponse.status === 404) {
+      throw new Error(`이 토큰에 ${GITHUB_SYNC.repo} 비공개 저장소 접근 권한이 없습니다.`);
+    }
+    if (!repositoryResponse.ok) throw new Error(await githubError(repositoryResponse));
     return user;
   }
   async function getGithubStateFile() {
     const response = await fetch(`${githubApiUrl()}?ref=${encodeURIComponent(GITHUB_SYNC.branch)}&t=${Date.now()}`, {
       headers: githubHeaders(true), cache: 'no-store'
     });
-    if (response.status === 404) return null;
+    if (response.status === 404) throw new Error(`토큰의 ${GITHUB_SYNC.repo} 접근 권한 또는 상태 파일을 확인하세요.`);
     if (!response.ok) throw new Error(await githubError(response));
     const file = await response.json();
     const statePayload = JSON.parse(decodeBase64Utf8(file.content));
@@ -1232,7 +1239,6 @@
     try {
       await verifyGithubIdentity();
       const result = await getGithubStateFile();
-      if (!result) throw new Error('아직 GitHub에 저장된 정합 상태가 없습니다.');
       const payload = result.statePayload;
       if (payload.schema !== 'wtfmi-alignment-cloud-state-v1' || !payload.projects || !payload.customRegions) {
         throw new Error('지원하지 않는 GitHub 상태 파일입니다.');
