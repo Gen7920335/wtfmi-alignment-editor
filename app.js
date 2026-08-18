@@ -141,6 +141,9 @@
     $('regionSelect').addEventListener('change', event => switchRegion(event.target.value));
     $('githubLoadButton').addEventListener('click', loadStateFromGithub);
     $('githubSaveButton').addEventListener('click', saveStateToGithub);
+    $('githubValidateTokenButton').addEventListener('click', validateGithubToken);
+    $('githubTokenInput').addEventListener('input', () => setGithubSyncStatus('토큰 검증이 필요합니다.'));
+    $('githubTokenInput').addEventListener('paste', () => setTimeout(validateGithubToken, 0));
     $('githubClearTokenButton').addEventListener('click', () => {
       $('githubTokenInput').value = '';
       setGithubSyncStatus('토큰을 메모리에서 삭제했습니다.');
@@ -1193,6 +1196,7 @@
     const busy = mode === 'busy';
     $('githubLoadButton').disabled = busy;
     $('githubSaveButton').disabled = busy;
+    $('githubValidateTokenButton').disabled = busy;
   }
   async function githubError(response) {
     try {
@@ -1231,6 +1235,26 @@
     const file = await response.json();
     const statePayload = JSON.parse(decodeBase64Utf8(file.content));
     return { file, statePayload };
+  }
+  async function validateGithubToken() {
+    if (!requireGithubToken()) return false;
+    setGithubSyncStatus('GitHub 토큰을 검증하는 중…', 'busy');
+    try {
+      const user = await verifyGithubIdentity();
+      const result = await getGithubStateFile();
+      const payload = result.statePayload;
+      if (payload.schema !== 'wtfmi-alignment-cloud-state-v1' || !payload.projects || !payload.customRegions) {
+        throw new Error('정합 상태 파일 형식이 잘못됐습니다.');
+      }
+      const projectCount = Object.keys(payload.projects).length;
+      setGithubSyncStatus(`토큰 검증 완료 · ${user.login} · 최신 프로젝트 ${projectCount}개`);
+      toast(`GitHub 토큰과 비공개 저장소 접근을 확인했습니다.`);
+      return true;
+    } catch (error) {
+      setGithubSyncStatus(`토큰 검증 실패 · ${error.message}`, 'error');
+      toast(`GitHub 토큰 검증 실패: ${error.message}`, true);
+      return false;
+    }
   }
   async function loadStateFromGithub() {
     if (!requireGithubToken()) return;

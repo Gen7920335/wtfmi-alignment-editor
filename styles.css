@@ -76,7 +76,9 @@ button.drawing { color: #061015; background: var(--amber); border-color: var(--a
 .github-sync-panel input { min-width: 0; width: 100%; color: var(--text); background: #0b1014; border: 1px solid #514b31; border-radius: 4px; padding: 5px 6px; }
 .sync-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 7px; }
 .sync-actions button { padding: 6px; }
-.github-sync-panel .clear-token { width: 100%; margin-top: 6px; padding: 5px; color: #ffbdc7; border-color: #713240; }
+.token-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
+.token-actions button { padding: 5px; }
+.github-sync-panel .clear-token { color: #ffbdc7; border-color: #713240; }
 .sync-status { margin-bottom: 7px; padding: 6px 7px; color: #d9cda1; background: #0d0c08; border-radius: 4px; font-size: 11px; }
 .sync-status.busy { color: var(--cyan); }
 .sync-status.error { color: #ff9dad; }
