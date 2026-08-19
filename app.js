@@ -541,6 +541,16 @@
       item.sourceBounds = rotatedBounds(geometry).map(round3);
     }
   }
+  function translateRegionGeometry(item, side, delta, originalGeometry) {
+    const geometry = { ...originalGeometry, center: [originalGeometry.center[0] + delta[0], originalGeometry.center[1] + delta[1]] };
+    if (side === 'target') {
+      item.targetGeometry = geometry;
+      item.targetBounds = rotatedBounds(geometry).map(round3);
+    } else {
+      item.geometry = geometry;
+      item.sourceBounds = rotatedBounds(geometry).map(round3);
+    }
+  }
 
   function invalidRegionGeometry(item, side) {
     const geometry = regionGeometry(item, side);
@@ -774,7 +784,6 @@
     ctx.setLineDash([7, 5]);
     for (const item of customRegionDefinitions()) {
       const side = viewer.side === 'target' ? 'target' : 'source';
-      if (side === 'target' && item.floorId !== state.floor) continue;
       const geometry = regionGeometry(item, side);
       if (!geometry) continue;
       const points = rotatedCorners(geometry).map(point => viewer.nativeToScreen(point));
@@ -1527,6 +1536,7 @@
     this.pointDrag = null;
     this.regionDrag = null;
     this.regionHandleDrag = null;
+    this.regionBodyDrag = null;
     const resize = () => {
       this.dpr = window.devicePixelRatio || 1;
       const width = Math.max(1, Math.round(canvas.clientWidth * this.dpr));
@@ -1582,6 +1592,22 @@
         this.pointDrag = { point: hit, coordinateSide: side };
         return;
       }
+      if (side === 'target' && !state.pendingSource && currentRegion()?.custom) {
+        const native = this.screenToNative(screen);
+        if (insideRegion(native, currentRegion(), 'target')) {
+          const stored = storedCustomRegion();
+          if (stored) {
+            const normalized = currentRegion();
+            stored.targetGeometry = structuredClone(normalized.targetGeometry);
+            stored.targetBounds = structuredClone(normalized.targetBounds);
+            this.regionBodyDrag = {
+              item: stored, start: native,
+              originalGeometry: structuredClone(normalized.targetGeometry), original: structuredClone(stored)
+            };
+            return;
+          }
+        }
+      }
       handlePointClick(side, this.screenToNative(screen));
     });
     canvas.addEventListener('pointermove', event => {
@@ -1599,6 +1625,11 @@
         const moving = clampToImage(this.screenToNative(screen), image);
         updateRegionFromHandle(this.regionHandleDrag.item, this.regionHandleDrag.side, this.regionHandleDrag.handleType, moving, this.regionHandleDrag.originalGeometry);
         syncRegionCornerPoints(this.regionHandleDrag.item);
+        renderAll();
+      } else if (this.regionBodyDrag) {
+        const moving = clampToImage(this.screenToNative(screen), state.targetImage);
+        translateRegionGeometry(this.regionBodyDrag.item, 'target', [moving[0] - this.regionBodyDrag.start[0], moving[1] - this.regionBodyDrag.start[1]], this.regionBodyDrag.originalGeometry);
+        syncRegionCornerPoints(this.regionBodyDrag.item);
         renderAll();
       } else if (this.pointDrag) {
         const image = this.pointDrag.coordinateSide === 'source' ? state.sourceImage : state.targetImage;
@@ -1620,8 +1651,19 @@
           persistCustomRegions(); persistCurrent(); populateRegionSelect();
         }
       }
+      if (this.regionBodyDrag) {
+        const error = invalidRegionGeometry(this.regionBodyDrag.item, 'target');
+        if (error) {
+          Object.assign(this.regionBodyDrag.item, this.regionBodyDrag.original);
+          syncRegionCornerPoints(this.regionBodyDrag.item);
+          toast(error, true);
+        } else {
+          syncRegionCornerPoints(this.regionBodyDrag.item);
+          persistCustomRegions(); persistCurrent(); populateRegionSelect();
+        }
+      }
       if (this.pointDrag) persistCurrent();
-      this.drag = null; this.pointDrag = null; this.regionDrag = null; this.regionHandleDrag = null;
+      this.drag = null; this.pointDrag = null; this.regionDrag = null; this.regionHandleDrag = null; this.regionBodyDrag = null;
       state.regionDraft = null;
       renderAll();
     };
