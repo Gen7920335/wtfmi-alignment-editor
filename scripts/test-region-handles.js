@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+if (source.includes('rotatedRectanglesOverlap') || source.includes('사각형과 겹칠 수 없습니다')) throw new Error('Rectangle overlap restriction remains');
 const start = source.indexOf('  function rotatedCorners');
 const end = source.indexOf('  function invalidRegionGeometry', start);
 if (start < 0 || end < 0) throw new Error('Region geometry functions not found');

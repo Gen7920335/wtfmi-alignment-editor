@@ -381,8 +381,6 @@
       toast('사각형이 너무 작습니다.', true); return;
     }
     const geometry = geometryFromBounds(bounds);
-    const overlaps = customRegionDefinitions().some(item => rotatedRectanglesOverlap(geometry, item.geometry));
-    if (overlaps) { toast('기존 사용자 지정 사각형과 겹칠 수 없습니다. 경계를 다시 지정하세요.', true); return; }
     const list = state.customRegions[state.map] ||= [];
     const id = `${state.map}-region-${Date.now().toString(36)}`;
     const displayIndex = Math.max(0, ...list.map(regionItem => Number(regionItem.displayIndex) || 0)) + 1;
@@ -508,22 +506,6 @@
     const x = dx * cos + dy * sin, y = -dx * sin + dy * cos;
     return Math.abs(x) <= Math.abs(geometry.width) / 2 + 1e-6 && Math.abs(y) <= Math.abs(geometry.height) / 2 + 1e-6;
   }
-  function rotatedRectanglesOverlap(left, right) {
-    const a = rotatedCorners(left), b = rotatedCorners(right);
-    const axes = [...edgeAxes(a), ...edgeAxes(b)];
-    return axes.every(axis => {
-      const pa = a.map(point => point[0] * axis[0] + point[1] * axis[1]);
-      const pb = b.map(point => point[0] * axis[0] + point[1] * axis[1]);
-      return Math.min(...pa) < Math.max(...pb) - 1e-6 && Math.min(...pb) < Math.max(...pa) - 1e-6;
-    });
-  }
-  function edgeAxes(corners) {
-    return [0, 1].map(index => {
-      const edge = [corners[index + 1][0] - corners[index][0], corners[index + 1][1] - corners[index][1]];
-      const length = Math.hypot(edge[0], edge[1]) || 1;
-      return [-edge[1] / length, edge[0] / length];
-    });
-  }
   function regionColor(item) { return `hsl(${((Number(item.colorIndex) || 0) * 137.508) % 360} 88% 66%)`; }
   function regionHandlePoints(geometry) {
     const corners = rotatedCorners(geometry);
@@ -564,12 +546,7 @@
     const geometry = regionGeometry(item, side);
     const image = side === 'target' ? state.targetImage : state.sourceImage;
     if (rotatedCorners(geometry).some(point => !insideImage(point, image))) return `사각형이 ${side === 'target' ? 'WTFMI' : '원본'} 지도 밖으로 나갈 수 없습니다.`;
-    const overlap = customRegionDefinitions().some(other => {
-      if (other.id === item.id || (side === 'target' && other.floorId !== item.floorId)) return false;
-      const otherGeometry = regionGeometry(other, side);
-      return otherGeometry && rotatedRectanglesOverlap(geometry, otherGeometry);
-    });
-    return overlap ? '다른 사용자 지정 사각형과 겹칠 수 없습니다.' : null;
+    return null;
   }
 
   function setPointMode(mode) {
