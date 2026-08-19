@@ -13,14 +13,14 @@ const baseCorners = rotatedCorners(base);
 
 const movedFirst = { geometry: structuredClone(base) };
 const firstTarget = [baseCorners[0][0] - 20, baseCorners[0][1] + 10];
-updateRegionFromHandle(movedFirst, 'corner1', firstTarget, base);
+updateRegionFromHandle(movedFirst, 'source', 'corner1', firstTarget, base);
 const movedFirstCorners = rotatedCorners(movedFirst.geometry);
 if (Math.hypot(movedFirstCorners[0][0] - firstTarget[0], movedFirstCorners[0][1] - firstTarget[1]) > 1e-9) throw new Error('Corner 1 did not follow the cursor');
 if (Math.hypot(movedFirstCorners[1][0] - baseCorners[1][0], movedFirstCorners[1][1] - baseCorners[1][1]) > 1e-9) throw new Error('Corner 2 should anchor corner 1 edits');
 
 const movedSecond = { geometry: structuredClone(base) };
 const secondTarget = [baseCorners[0][0] + 100, baseCorners[0][1]];
-updateRegionFromHandle(movedSecond, 'corner2', secondTarget, base);
+updateRegionFromHandle(movedSecond, 'source', 'corner2', secondTarget, base);
 const movedSecondCorners = rotatedCorners(movedSecond.geometry);
 if (Math.hypot(movedSecondCorners[0][0] - baseCorners[0][0], movedSecondCorners[0][1] - baseCorners[0][1]) > 1e-9) throw new Error('Corner 1 should anchor corner 2 edits');
 if (Math.hypot(movedSecondCorners[1][0] - secondTarget[0], movedSecondCorners[1][1] - secondTarget[1]) > 1e-9) throw new Error('Corner 2 did not follow the cursor');
@@ -28,11 +28,17 @@ if (Math.hypot(movedSecondCorners[1][0] - secondTarget[0], movedSecondCorners[1]
 const movedThird = { geometry: structuredClone(base) };
 const normal = [-Math.sin(base.angle), Math.cos(base.angle)];
 const thirdTarget = [baseCorners[1][0] + normal[0] * 70, baseCorners[1][1] + normal[1] * 70];
-updateRegionFromHandle(movedThird, 'corner3', thirdTarget, base);
+updateRegionFromHandle(movedThird, 'source', 'corner3', thirdTarget, base);
 const movedThirdCorners = rotatedCorners(movedThird.geometry);
 if (Math.hypot(movedThirdCorners[2][0] - thirdTarget[0], movedThirdCorners[2][1] - thirdTarget[1]) > 1e-9) throw new Error('Corner 3 did not follow the perpendicular cursor position');
 if (Math.abs(movedThird.geometry.angle - base.angle) > 1e-12 || Math.abs(movedThird.geometry.width - base.width) > 1e-9) throw new Error('Corner 3 changed the 1-2 baseline');
 
 const handles = regionHandlePoints(base);
 if (!handles.corner1 || !handles.corner2 || !handles.corner3 || Object.keys(handles).length !== 3) throw new Error('Expected exactly three corner handles');
-console.log('Region handles passed: three actual corners, stable 1-2 baseline, perpendicular corner 3');
+
+const dualSide = { geometry: structuredClone(base), targetGeometry: structuredClone(base) };
+const targetCorner = rotatedCorners(base)[2];
+updateRegionFromHandle(dualSide, 'target', 'corner3', [targetCorner[0] + normal[0] * 30, targetCorner[1] + normal[1] * 30], base);
+if (JSON.stringify(dualSide.geometry) !== JSON.stringify(base)) throw new Error('Target handle changed source geometry');
+if (JSON.stringify(dualSide.targetGeometry) === JSON.stringify(base)) throw new Error('Target handle did not change target geometry');
+console.log('Region handles passed: three actual corners on both maps, stable 1-2 baseline, perpendicular corner 3');

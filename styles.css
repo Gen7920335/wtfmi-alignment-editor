@@ -82,6 +82,7 @@ button.drawing { color: #061015; background: var(--amber); border-color: var(--a
 .sync-status { margin-bottom: 7px; padding: 6px 7px; color: #d9cda1; background: #0d0c08; border-radius: 4px; font-size: 11px; }
 .sync-status.busy { color: var(--cyan); }
 .sync-status.error { color: #ff9dad; }
+.region-corner-type { display: inline-block; min-width: 52px; padding: 3px 5px; color: var(--cyan); border: 1px solid #315465; border-radius: 3px; text-align: center; }
 .github-sync-panel code { color: #d9cda1; font-size: 10px; overflow-wrap: anywhere; }
 .status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .stat { padding: 8px; background: #0b1014; border: 1px solid #26313a; border-radius: 5px; }

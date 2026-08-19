@@ -241,6 +241,16 @@
     const [sourceImage, targetImage] = await Promise.all([loadImage(MAPS[state.map].source), loadImage(floorConfig.target)]);
     state.sourceImage = sourceImage;
     state.targetImage = targetImage;
+    for (const regionItem of (state.customRegions[state.map] || []).filter(item => item.floorId === state.floor)) ensureTargetRegionGeometry(regionItem);
+    persistCustomRegions();
+    const storedRegion = storedCustomRegion();
+    if (storedRegion) {
+      ensureTargetRegionGeometry(storedRegion);
+      syncRegionCornerPoints(storedRegion);
+      state.nextId = Math.max(0, ...state.points.map(point => point.id || 0)) + 1;
+      saveCurrentToStore();
+      localStorage.setItem('wtfmi-alignment-projects-v1', JSON.stringify(state.projectStore));
+    }
     sourceViewer.setImage(sourceImage);
     targetViewer.setImage(targetImage);
     overlayViewer.setImage(sourceImage);
@@ -347,8 +357,10 @@
   function customRegionDefinitions() {
     return (state.customRegions[state.map] || []).map((item, index) => {
       const geometry = item.geometry || geometryFromBounds(item.sourceBounds);
+      const targetGeometry = item.targetGeometry || (item.targetBounds ? geometryFromBounds(item.targetBounds) : null);
       return {
-        ...item, geometry, sourceBounds: rotatedBounds(geometry), displayIndex: item.displayIndex || index + 1,
+        ...item, geometry, targetGeometry, sourceBounds: rotatedBounds(geometry),
+        targetBounds: targetGeometry ? rotatedBounds(targetGeometry) : null, displayIndex: item.displayIndex || index + 1,
         colorIndex: item.colorIndex ?? index, custom: true,
         floorLabel: MAPS[state.map].floors.find(floorItem => floorItem.id === item.floorId)?.label || item.floorId
       };
@@ -376,7 +388,12 @@
     const displayIndex = Math.max(0, ...list.map(regionItem => Number(regionItem.displayIndex) || 0)) + 1;
     const usedColors = new Set(list.map(regionItem => Number(regionItem.colorIndex) || 0));
     let colorIndex = 0; while (usedColors.has(colorIndex)) colorIndex += 1;
-    const item = { id, label: `사용자 구역 ${displayIndex}`, displayIndex, colorIndex, floorId: state.floor, geometry, sourceBounds: bounds.map(round3), targetBounds: null, createdAt: new Date().toISOString() };
+    const targetGeometry = mapGeometryBetweenImages(geometry, state.sourceImage, state.targetImage);
+    const item = {
+      id, label: `사용자 구역 ${displayIndex}`, displayIndex, colorIndex, floorId: state.floor,
+      geometry, sourceBounds: bounds.map(round3), targetGeometry,
+      targetBounds: rotatedBounds(targetGeometry).map(round3), cornerPointIds: [], createdAt: new Date().toISOString()
+    };
     list.push(item);
     persistCustomRegions();
     state.region = id; state.regionDrawMode = false; state.regionDraft = null;
@@ -398,6 +415,8 @@
     const oldKey = selectionKey();
     const savedProject = state.projectStore[oldKey];
     item.floorId = floorId;
+    item.targetGeometry = null;
+    item.targetBounds = null;
     state.floor = floorId;
     if (savedProject) {
       const newKey = selectionKey();
@@ -426,6 +445,47 @@
   function geometryFromBounds(bounds) {
     return { center: [(bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2], width: bounds[2] - bounds[0], height: bounds[3] - bounds[1], angle: 0 };
   }
+  function mapGeometryBetweenImages(geometry, sourceImage, targetImage) {
+    const scaleX = targetImage.naturalWidth / sourceImage.naturalWidth;
+    const scaleY = targetImage.naturalHeight / sourceImage.naturalHeight;
+    const mapped = rotatedCorners(geometry).slice(0, 3).map(([x, y]) => [x * scaleX, y * scaleY]);
+    return geometryFromThreeCorners(mapped[0], mapped[1], mapped[2]) || geometryFromBounds(rotatedBounds(geometry).map((value, index) => value * (index % 2 ? scaleY : scaleX)));
+  }
+  function storedCustomRegion() {
+    return (state.customRegions[state.map] || []).find(item => item.id === state.region) || null;
+  }
+  function ensureTargetRegionGeometry(item) {
+    if (!item.targetGeometry) item.targetGeometry = item.targetBounds ? geometryFromBounds(item.targetBounds) : mapGeometryBetweenImages(item.geometry || geometryFromBounds(item.sourceBounds), state.sourceImage, state.targetImage);
+    item.targetBounds = rotatedBounds(item.targetGeometry).map(round3);
+  }
+  function syncRegionCornerPoints(item) {
+    if (!item?.geometry || !item?.targetGeometry) return;
+    const sourceHandles = regionHandlePoints(item.geometry);
+    const targetHandles = regionHandlePoints(item.targetGeometry);
+    const sourceCorners = [sourceHandles.corner1, sourceHandles.corner2, sourceHandles.corner3];
+    const targetCorners = [targetHandles.corner1, targetHandles.corner2, targetHandles.corner3];
+    const ids = Array.isArray(item.cornerPointIds) ? [...item.cornerPointIds] : [];
+    let nextId = Math.max(state.nextId || 1, Math.max(0, ...state.points.map(point => Number(point.id) || 0)) + 1);
+    for (let index = 0; index < 3; index++) {
+      let point = state.points.find(candidate => candidate.regionCorner && candidate.regionId === item.id && candidate.regionCornerIndex === index + 1);
+      const requestedId = Number(ids[index]);
+      if (!point && requestedId) point = state.points.find(candidate => candidate.id === requestedId && candidate.regionCorner && candidate.regionId === item.id);
+      if (!point) {
+        let id = requestedId;
+        if (!id || state.points.some(candidate => candidate.id === id)) id = nextId++;
+        point = { id, enabled: true };
+        state.points.push(point);
+      }
+      Object.assign(point, {
+        type: 'control', name: `사각형 꼭짓점 ${index + 1}`, regionCorner: true,
+        regionId: item.id, regionCornerIndex: index + 1,
+        source: [...sourceCorners[index]], target: [...targetCorners[index]]
+      });
+      ids[index] = point.id;
+    }
+    item.cornerPointIds = ids;
+    state.nextId = Math.max(nextId, Math.max(0, ...state.points.map(point => Number(point.id) || 0)) + 1);
+  }
   function rotatedCorners(geometry) {
     const cos = Math.cos(geometry.angle), sin = Math.sin(geometry.angle), halfWidth = geometry.width / 2, halfHeight = geometry.height / 2;
     return [[-halfWidth, -halfHeight], [halfWidth, -halfHeight], [halfWidth, halfHeight], [-halfWidth, halfHeight]].map(([x, y]) => [
@@ -437,12 +497,16 @@
     const corners = rotatedCorners(geometry), xs = corners.map(point => point[0]), ys = corners.map(point => point[1]);
     return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
   }
-  function insideRegion(point, item) {
-    if (!item?.custom || !item.geometry) return insideBounds(point, item?.sourceBounds);
-    const dx = point[0] - item.geometry.center[0], dy = point[1] - item.geometry.center[1];
-    const cos = Math.cos(item.geometry.angle), sin = Math.sin(item.geometry.angle);
+  function regionGeometry(item, side = 'source') {
+    return side === 'target' ? item?.targetGeometry : item?.geometry;
+  }
+  function insideRegion(point, item, side = 'source') {
+    const geometry = regionGeometry(item, side);
+    if (!item?.custom || !geometry) return insideBounds(point, side === 'target' ? item?.targetBounds : item?.sourceBounds);
+    const dx = point[0] - geometry.center[0], dy = point[1] - geometry.center[1];
+    const cos = Math.cos(geometry.angle), sin = Math.sin(geometry.angle);
     const x = dx * cos + dy * sin, y = -dx * sin + dy * cos;
-    return Math.abs(x) <= Math.abs(item.geometry.width) / 2 + 1e-6 && Math.abs(y) <= Math.abs(item.geometry.height) / 2 + 1e-6;
+    return Math.abs(x) <= Math.abs(geometry.width) / 2 + 1e-6 && Math.abs(y) <= Math.abs(geometry.height) / 2 + 1e-6;
   }
   function rotatedRectanglesOverlap(left, right) {
     const a = rotatedCorners(left), b = rotatedCorners(right);
@@ -480,20 +544,31 @@
       angle: Math.atan2(axis[1], axis[0])
     };
   }
-  function updateRegionFromHandle(item, handleType, movingPoint, originalGeometry) {
+  function updateRegionFromHandle(item, side, handleType, movingPoint, originalGeometry) {
     const handles = regionHandlePoints(originalGeometry);
     if (handleType === 'corner1') handles.corner1 = [...movingPoint];
     else if (handleType === 'corner2') handles.corner2 = [...movingPoint];
     else if (handleType === 'corner3') handles.corner3 = [...movingPoint];
     const geometry = geometryFromThreeCorners(handles.corner1, handles.corner2, handles.corner3);
     if (!geometry) return;
-    item.geometry = geometry;
-    item.sourceBounds = rotatedBounds(item.geometry).map(round3);
+    if (side === 'target') {
+      item.targetGeometry = geometry;
+      item.targetBounds = rotatedBounds(geometry).map(round3);
+    } else {
+      item.geometry = geometry;
+      item.sourceBounds = rotatedBounds(geometry).map(round3);
+    }
   }
 
-  function invalidRegionGeometry(item) {
-    if (rotatedCorners(item.geometry).some(point => !insideImage(point, state.sourceImage))) return '사각형이 원본 지도 밖으로 나갈 수 없습니다.';
-    const overlap = customRegionDefinitions().some(other => other.id !== item.id && rotatedRectanglesOverlap(item.geometry, other.geometry));
+  function invalidRegionGeometry(item, side) {
+    const geometry = regionGeometry(item, side);
+    const image = side === 'target' ? state.targetImage : state.sourceImage;
+    if (rotatedCorners(geometry).some(point => !insideImage(point, image))) return `사각형이 ${side === 'target' ? 'WTFMI' : '원본'} 지도 밖으로 나갈 수 없습니다.`;
+    const overlap = customRegionDefinitions().some(other => {
+      if (other.id === item.id || (side === 'target' && other.floorId !== item.floorId)) return false;
+      const otherGeometry = regionGeometry(other, side);
+      return otherGeometry && rotatedRectanglesOverlap(geometry, otherGeometry);
+    });
     return overlap ? '다른 사용자 지정 사각형과 겹칠 수 없습니다.' : null;
   }
 
@@ -522,8 +597,8 @@
       toast(`${side === 'source' ? '원본' : 'WTFMI'}의 현재 정합 구역 밖에는 점을 만들 수 없습니다.`, true);
       return;
     }
-    if (side === 'source' && currentRegion()?.custom && !insideRegion(point, currentRegion())) {
-      toast('회전된 현재 사용자 지정 사각형 밖에는 점을 만들 수 없습니다.', true);
+    if (currentRegion()?.custom && !insideRegion(point, currentRegion(), side)) {
+      toast(`회전된 현재 ${side === 'target' ? 'WTFMI' : '원본'} 사각형 밖에는 점을 만들 수 없습니다.`, true);
       return;
     }
     if (side === 'source') {
@@ -559,9 +634,9 @@
   }
 
   function clearPoints() {
-    if (!state.points.length) return;
+    if (!state.points.some(point => !point.regionCorner)) return;
     snapshot();
-    state.points = [];
+    state.points = state.points.filter(point => point.regionCorner);
     state.pendingSource = null;
     persistCurrent(); updateUi(); renderAll();
   }
@@ -600,7 +675,7 @@
     if (viewer.side === 'source') drawImageNative(ctx, state.sourceImage, viewer.view, dpr);
     else if (viewer.side === 'target') drawImageNative(ctx, state.targetImage, viewer.view, dpr);
     else drawOverlay(ctx, viewer, dpr);
-    if (viewer.side === 'source' || viewer.side === 'overlay') drawRegionLayer(ctx, viewer);
+    drawRegionLayer(ctx, viewer);
     if (viewer.side === 'source') drawSourceMarkers(ctx, viewer);
     if (viewer.side === 'target') drawCandidateMarkers(ctx, viewer);
     drawPointLayer(ctx, viewer);
@@ -687,6 +762,7 @@
     }
     const coordinateSide = viewer.side === 'target' ? 'target' : 'source';
     for (const point of state.points) {
+      if (point.regionCorner) continue;
       const screen = viewer.nativeToScreen(point[coordinateSide]);
       drawPoint(ctx, screen, point.id, point.type, point.enabled);
     }
@@ -710,7 +786,11 @@
     ctx.save();
     ctx.setLineDash([7, 5]);
     for (const item of customRegionDefinitions()) {
-      const points = rotatedCorners(item.geometry).map(point => viewer.nativeToScreen(point));
+      const side = viewer.side === 'target' ? 'target' : 'source';
+      if (side === 'target' && item.floorId !== state.floor) continue;
+      const geometry = regionGeometry(item, side);
+      if (!geometry) continue;
+      const points = rotatedCorners(geometry).map(point => viewer.nativeToScreen(point));
       const color = regionColor(item);
       ctx.beginPath(); ctx.moveTo(...points[0]); for (const point of points.slice(1)) ctx.lineTo(...point); ctx.closePath();
       ctx.strokeStyle = color;
@@ -720,9 +800,9 @@
       ctx.font = '700 11px "Segoe UI"';
       ctx.fillStyle = color;
       ctx.fillText(`#${item.displayIndex} · ${item.label} · ${item.floorLabel}`, points[0][0] + 4, points[0][1] - 6);
-      if (item.id === state.region && viewer.side === 'source') drawRegionHandles(ctx, item.geometry, viewer, color);
+      if (item.id === state.region && viewer.side !== 'overlay') drawRegionHandles(ctx, geometry, viewer, color);
     }
-    if (state.regionDraft) {
+    if (state.regionDraft && viewer.side !== 'target') {
       const bounds = normalizeBounds(state.regionDraft.start, state.regionDraft.end);
       const topLeft = viewer.nativeToScreen([bounds[0], bounds[1]]);
       const bottomRight = viewer.nativeToScreen([bounds[2], bounds[3]]);
@@ -996,7 +1076,7 @@
     return side === 'source' ? region?.sourceBounds : region?.targetBounds;
   }
   function insideCurrentSourceRegion(point) { return currentRegion()?.custom ? insideRegion(point, currentRegion()) : insideBounds(point, currentRegion()?.sourceBounds); }
-  function insideCurrentTargetRegion(point) { return insideBounds(point, currentRegion()?.targetBounds); }
+  function insideCurrentTargetRegion(point) { return currentRegion()?.custom ? insideRegion(point, currentRegion(), 'target') : insideBounds(point, currentRegion()?.targetBounds); }
   function pointInsideCurrentRegion(point) {
     return insideCurrentSourceRegion(point.source) && insideCurrentTargetRegion(point.target);
   }
@@ -1080,21 +1160,21 @@
       const error = errorById.get(point.id);
       return `<tr data-id="${point.id}">
         <td><label><input class="enabled-toggle" type="checkbox" ${point.enabled ? 'checked' : ''}> ${point.id}</label></td>
-        <td><select class="type-select"><option value="control" ${point.type === 'control' ? 'selected' : ''}>기준점</option><option value="validation" ${point.type === 'validation' ? 'selected' : ''}>검증점</option></select></td>
-        <td><input class="name-input" type="text" value="${escapeHtml(point.name)}"></td>
+        <td>${point.regionCorner ? '<span class="region-corner-type">사각형</span>' : `<select class="type-select"><option value="control" ${point.type === 'control' ? 'selected' : ''}>기준점</option><option value="validation" ${point.type === 'validation' ? 'selected' : ''}>검증점</option></select>`}</td>
+        <td><input class="name-input" type="text" value="${escapeHtml(point.name)}" ${point.regionCorner ? 'readonly' : ''}></td>
         <td>${round(point.source[0])}, ${round(point.source[1])}</td>
         <td>${round(point.target[0])}, ${round(point.target[1])}</td>
         <td class="${error == null ? '' : error <= 10 ? 'error-good' : 'error-bad'}">${error == null ? '—' : `${error.toFixed(2)}px`}</td>
-        <td><button class="row-delete" type="button">삭제</button></td>
+        <td>${point.regionCorner ? '고정' : '<button class="row-delete" type="button">삭제</button>'}</td>
       </tr>`;
     }).join('');
     for (const row of $('pointTableBody').querySelectorAll('tr')) {
       const id = Number(row.dataset.id);
       const point = state.points.find(item => item.id === id);
       row.querySelector('.enabled-toggle').addEventListener('change', event => { snapshot(); point.enabled = event.target.checked; persistCurrent(); renderAll(); });
-      row.querySelector('.type-select').addEventListener('change', event => { snapshot(); point.type = event.target.value; persistCurrent(); renderAll(); });
+      row.querySelector('.type-select')?.addEventListener('change', event => { snapshot(); point.type = event.target.value; persistCurrent(); renderAll(); });
       row.querySelector('.name-input').addEventListener('change', event => { snapshot(); point.name = event.target.value; persistCurrent(); renderAll(); });
-      row.querySelector('.row-delete').addEventListener('click', () => { snapshot(); state.points = state.points.filter(item => item.id !== id); persistCurrent(); renderAll(); });
+      row.querySelector('.row-delete')?.addEventListener('click', () => { snapshot(); state.points = state.points.filter(item => item.id !== id); persistCurrent(); renderAll(); });
     }
   }
 
@@ -1130,7 +1210,9 @@
           colorIndex: project.customRegion.colorIndex,
           geometry: project.customRegion.geometry || geometryFromBounds(project.customRegion.sourceBounds),
           sourceBounds: project.customRegion.sourceBounds,
+          targetGeometry: project.customRegion.targetGeometry || null,
           targetBounds: project.customRegion.targetBounds || null,
+          cornerPointIds: project.customRegion.cornerPointIds || [],
           createdAt: project.customRegion.createdAt || new Date().toISOString()
         };
         const index = list.findIndex(item => item.id === imported.id);
@@ -1481,7 +1563,7 @@
         this.draw();
         return;
       }
-      if (side === 'source') {
+      if (side !== 'overlay') {
         const regionHandle = this.hitRegionHandle(screen);
         if (regionHandle) {
           const stored = (state.customRegions[state.map] || []).find(item => item.id === state.region);
@@ -1489,7 +1571,11 @@
             const normalized = currentRegion();
             stored.geometry = structuredClone(normalized.geometry);
             stored.sourceBounds = structuredClone(normalized.sourceBounds);
-            this.regionHandleDrag = { item: stored, handleType: regionHandle.handleType, original: structuredClone(stored) };
+            const handleSide = side === 'target' ? 'target' : 'source';
+            this.regionHandleDrag = {
+              item: stored, side: handleSide, handleType: regionHandle.handleType,
+              originalGeometry: structuredClone(regionGeometry(normalized, handleSide)), original: structuredClone(stored)
+            };
             return;
           }
         }
@@ -1513,8 +1599,10 @@
         state.regionDraft = this.regionDrag;
         renderAll();
       } else if (this.regionHandleDrag) {
-        const moving = clampToImage(this.screenToNative(screen), state.sourceImage);
-        updateRegionFromHandle(this.regionHandleDrag.item, this.regionHandleDrag.handleType, moving, this.regionHandleDrag.original.geometry);
+        const image = this.regionHandleDrag.side === 'target' ? state.targetImage : state.sourceImage;
+        const moving = clampToImage(this.screenToNative(screen), image);
+        updateRegionFromHandle(this.regionHandleDrag.item, this.regionHandleDrag.side, this.regionHandleDrag.handleType, moving, this.regionHandleDrag.originalGeometry);
+        syncRegionCornerPoints(this.regionHandleDrag.item);
         renderAll();
       } else if (this.pointDrag) {
         const image = this.pointDrag.coordinateSide === 'source' ? state.sourceImage : state.targetImage;
@@ -1526,11 +1614,13 @@
     const endDrag = () => {
       if (this.regionDrag) finishCustomRegion(this.regionDrag.start, this.regionDrag.end);
       if (this.regionHandleDrag) {
-        const error = invalidRegionGeometry(this.regionHandleDrag.item);
+        const error = invalidRegionGeometry(this.regionHandleDrag.item, this.regionHandleDrag.side);
         if (error) {
           Object.assign(this.regionHandleDrag.item, this.regionHandleDrag.original);
+          syncRegionCornerPoints(this.regionHandleDrag.item);
           toast(error, true);
         } else {
+          syncRegionCornerPoints(this.regionHandleDrag.item);
           persistCustomRegions(); persistCurrent(); populateRegionSelect();
         }
       }
@@ -1580,10 +1670,12 @@
     return best;
   };
   Viewer.prototype.hitRegionHandle = function hitRegionHandle(screen) {
-    if (this.side !== 'source') return null;
+    if (this.side === 'overlay') return null;
     const item = currentRegion();
     if (!item?.custom) return null;
-    const handles = regionHandlePoints(item.geometry);
+    const geometry = regionGeometry(item, this.side === 'target' ? 'target' : 'source');
+    if (!geometry) return null;
+    const handles = regionHandlePoints(geometry);
     for (const handleType of ['corner1', 'corner2', 'corner3']) {
       if (distance(screen, this.nativeToScreen(handles[handleType])) <= 14) return { handleType };
     }
