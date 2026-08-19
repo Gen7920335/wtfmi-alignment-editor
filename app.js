@@ -118,7 +118,7 @@
     map: 'customs', floor: 'main', region: null, pointMode: 'control', model: 'piecewise', opacity: 0.5,
     points: [], pendingSource: null, nextId: 1, history: [], projectStore: loadStoredProjects(), customRegions: loadStoredCustomRegions(),
     showTriangles: true, showMarkers: true, allowGlobalFallback: false,
-    sourceImage: null, targetImage: null, battlePassData: null, spaceDown: false, regionDrawMode: false, regionDraft: null
+    sourceImage: null, targetImage: null, battlePassData: null, spaceDown: false, regionDrawMode: null, regionDraft: null
   };
 
   const sourceViewer = new Viewer($('sourceCanvas'), 'source');
@@ -179,7 +179,7 @@
     window.addEventListener('keydown', event => {
       if (event.code === 'Space' && !isFormElement(event.target)) { state.spaceDown = true; event.preventDefault(); }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); undo(); }
-      if (event.key === 'Escape') { state.pendingSource = null; state.regionDrawMode = false; state.regionDraft = null; renderAll(); updateUi(); }
+      if (event.key === 'Escape') { state.pendingSource = null; state.regionDrawMode = null; state.regionDraft = null; renderAll(); updateUi(); }
     });
     window.addEventListener('keyup', event => { if (event.code === 'Space') state.spaceDown = false; });
   }
@@ -190,7 +190,7 @@
 
   async function switchMap(map) {
     saveCurrentToStore();
-    state.regionDrawMode = false; state.regionDraft = null;
+    state.regionDrawMode = null; state.regionDraft = null;
     state.map = map;
     $('mapSelect').value = map;
     $('floorSelect').innerHTML = '';
@@ -202,7 +202,7 @@
 
   async function switchFloor(floorId) {
     saveCurrentToStore();
-    state.regionDrawMode = false; state.regionDraft = null;
+    state.regionDrawMode = null; state.regionDraft = null;
     state.floor = floorId;
     state.region = null;
     await loadSelection();
@@ -210,7 +210,7 @@
 
   async function switchRegion(regionId) {
     saveCurrentToStore();
-    state.regionDrawMode = false; state.regionDraft = null;
+    state.regionDrawMode = null; state.regionDraft = null;
     const selected = regionDefinitions().find(item => item.id === regionId);
     if (selected?.floorId && selected.floorId !== state.floor) {
       state.floor = selected.floorId;
@@ -241,12 +241,13 @@
     const [sourceImage, targetImage] = await Promise.all([loadImage(MAPS[state.map].source), loadImage(floorConfig.target)]);
     state.sourceImage = sourceImage;
     state.targetImage = targetImage;
-    for (const regionItem of (state.customRegions[state.map] || []).filter(item => item.floorId === state.floor)) ensureTargetRegionGeometry(regionItem);
-    persistCustomRegions();
     const storedRegion = storedCustomRegion();
     if (storedRegion) {
-      ensureTargetRegionGeometry(storedRegion);
-      syncRegionCornerPoints(storedRegion);
+      if (storedRegion.targetPlacementConfirmed) syncRegionCornerPoints(storedRegion);
+      else {
+        state.points = state.points.filter(point => !(point.regionCorner && point.regionId === storedRegion.id));
+        storedRegion.cornerPointIds = [];
+      }
       state.nextId = Math.max(0, ...state.points.map(point => point.id || 0)) + 1;
       saveCurrentToStore();
       localStorage.setItem('wtfmi-alignment-projects-v1', JSON.stringify(state.projectStore));
@@ -357,7 +358,7 @@
   function customRegionDefinitions() {
     return (state.customRegions[state.map] || []).map((item, index) => {
       const geometry = item.geometry || geometryFromBounds(item.sourceBounds);
-      const targetGeometry = item.targetGeometry || (item.targetBounds ? geometryFromBounds(item.targetBounds) : null);
+      const targetGeometry = item.targetPlacementConfirmed ? (item.targetGeometry || (item.targetBounds ? geometryFromBounds(item.targetBounds) : null)) : null;
       return {
         ...item, geometry, targetGeometry, sourceBounds: rotatedBounds(geometry),
         targetBounds: targetGeometry ? rotatedBounds(targetGeometry) : null, displayIndex: item.displayIndex || index + 1,
@@ -368,11 +369,13 @@
   }
 
   function toggleRegionDrawMode() {
-    state.regionDrawMode = !state.regionDrawMode;
+    if (state.regionDrawMode) state.regionDrawMode = null;
+    else state.regionDrawMode = currentRegion()?.custom && !currentRegion()?.targetPlacementConfirmed ? 'target' : 'source';
     state.regionDraft = null;
     state.pendingSource = null;
     updateUi(); renderAll();
-    if (state.regionDrawMode) toast('왼쪽 원본 지도에서 사용자 지정 구역을 드래그하세요.');
+    if (state.regionDrawMode === 'source') toast('왼쪽 원본 지도에서 사용자 지정 구역을 드래그하세요.');
+    if (state.regionDrawMode === 'target') toast('오른쪽 WTFMI 지도에서 대응 사각형을 드래그하세요.');
   }
 
   function finishCustomRegion(start, end) {
@@ -386,17 +389,39 @@
     const displayIndex = Math.max(0, ...list.map(regionItem => Number(regionItem.displayIndex) || 0)) + 1;
     const usedColors = new Set(list.map(regionItem => Number(regionItem.colorIndex) || 0));
     let colorIndex = 0; while (usedColors.has(colorIndex)) colorIndex += 1;
-    const targetGeometry = mapGeometryBetweenImages(geometry, state.sourceImage, state.targetImage);
     const item = {
       id, label: `사용자 구역 ${displayIndex}`, displayIndex, colorIndex, floorId: state.floor,
-      geometry, sourceBounds: bounds.map(round3), targetGeometry,
-      targetBounds: rotatedBounds(targetGeometry).map(round3), cornerPointIds: [], createdAt: new Date().toISOString()
+      geometry, sourceBounds: bounds.map(round3), targetGeometry: null, targetBounds: null,
+      targetPlacementConfirmed: false, cornerPointIds: [], createdAt: new Date().toISOString()
     };
     list.push(item);
     persistCustomRegions();
-    state.region = id; state.regionDrawMode = false; state.regionDraft = null;
+    state.region = id; state.regionDrawMode = 'target'; state.regionDraft = null;
     loadSelection();
-    toast(`${item.label}을 ${currentFloor().label}에 추가했습니다.`);
+    toast(`${item.label} 원본 구역을 추가했습니다. 이제 오른쪽 WTFMI 지도에서 대응 사각형을 그리세요.`);
+  }
+
+  function finishTargetRegion(start, end) {
+    const bounds = normalizeBounds(start, end).map((value, index) => Math.max(0, Math.min(index % 2 ? state.targetImage.naturalHeight : state.targetImage.naturalWidth, value)));
+    if (bounds[2] - bounds[0] < 8 || bounds[3] - bounds[1] < 8) {
+      toast('WTFMI 사각형이 너무 작습니다.', true); return;
+    }
+    const item = storedCustomRegion();
+    if (!item) {
+      state.regionDrawMode = null;
+      toast('대응할 원본 사각형을 찾을 수 없습니다.', true); return;
+    }
+    item.targetGeometry = geometryFromBounds(bounds);
+    item.targetBounds = bounds.map(round3);
+    item.targetPlacementConfirmed = true;
+    item.cornerPointIds = [];
+    state.regionDrawMode = null;
+    state.regionDraft = null;
+    syncRegionCornerPoints(item);
+    persistCustomRegions(); persistCurrent(); populateRegionSelect();
+    targetViewer.fitBounds(item.targetBounds);
+    renderAll();
+    toast(`${item.label} WTFMI 사각형을 지정했습니다. 이제 층을 바꿔도 이 위치가 유지됩니다.`);
   }
 
   function renameCurrentRegion() {
@@ -409,16 +434,19 @@
   async function changeCurrentRegionFloor(floorId) {
     const item = (state.customRegions[state.map] || []).find(regionItem => regionItem.id === state.region);
     if (!item || !MAPS[state.map].floors.some(floorItem => floorItem.id === floorId)) return;
+    if (item.floorId === floorId) return;
     saveCurrentToStore();
     const oldKey = selectionKey();
     const savedProject = state.projectStore[oldKey];
     item.floorId = floorId;
-    item.targetGeometry = null;
-    item.targetBounds = null;
     state.floor = floorId;
     if (savedProject) {
       const newKey = selectionKey();
-      state.projectStore[newKey] = { ...savedProject, floor: floorId };
+      state.projectStore[newKey] = {
+        ...savedProject,
+        floor: floorId,
+        customRegion: savedProject.customRegion ? { ...savedProject.customRegion, floorId } : savedProject.customRegion
+      };
       if (newKey !== oldKey) delete state.projectStore[oldKey];
     }
     persistCustomRegions(); persistCurrent();
@@ -434,6 +462,7 @@
     list.splice(index, 1);
     delete state.projectStore[selectionKey()];
     persistCustomRegions();
+    state.regionDrawMode = null; state.regionDraft = null;
     state.region = null;
     await loadSelection();
     toast(`${removed.label}을 삭제했습니다. 해당 마커는 본도로 돌아갔습니다.`);
@@ -443,18 +472,8 @@
   function geometryFromBounds(bounds) {
     return { center: [(bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2], width: bounds[2] - bounds[0], height: bounds[3] - bounds[1], angle: 0 };
   }
-  function mapGeometryBetweenImages(geometry, sourceImage, targetImage) {
-    const scaleX = targetImage.naturalWidth / sourceImage.naturalWidth;
-    const scaleY = targetImage.naturalHeight / sourceImage.naturalHeight;
-    const mapped = rotatedCorners(geometry).slice(0, 3).map(([x, y]) => [x * scaleX, y * scaleY]);
-    return geometryFromThreeCorners(mapped[0], mapped[1], mapped[2]) || geometryFromBounds(rotatedBounds(geometry).map((value, index) => value * (index % 2 ? scaleY : scaleX)));
-  }
   function storedCustomRegion() {
     return (state.customRegions[state.map] || []).find(item => item.id === state.region) || null;
-  }
-  function ensureTargetRegionGeometry(item) {
-    if (!item.targetGeometry) item.targetGeometry = item.targetBounds ? geometryFromBounds(item.targetBounds) : mapGeometryBetweenImages(item.geometry || geometryFromBounds(item.sourceBounds), state.sourceImage, state.targetImage);
-    item.targetBounds = rotatedBounds(item.targetGeometry).map(round3);
   }
   function syncRegionCornerPoints(item) {
     if (!item?.geometry || !item?.targetGeometry) return;
@@ -572,6 +591,10 @@
     if (side === 'overlay') return;
     if (currentRegion()?.placeholder) {
       toast('이 층에 사용자 지정 사각형을 먼저 추가하세요.', true);
+      return;
+    }
+    if (currentRegion()?.custom && !currentRegion()?.targetPlacementConfirmed) {
+      toast('WTFMI 대응 사각형을 먼저 지정하세요.', true);
       return;
     }
     const image = side === 'source' ? state.sourceImage : state.targetImage;
@@ -798,7 +821,7 @@
       ctx.fillText(`#${item.displayIndex} · ${item.label} · ${item.floorLabel}`, points[0][0] + 4, points[0][1] - 6);
       if (item.id === state.region && viewer.side !== 'overlay') drawRegionHandles(ctx, geometry, viewer, color);
     }
-    if (state.regionDraft && viewer.side !== 'target') {
+    if (state.regionDraft && viewer.side === state.regionDraft.side) {
       const bounds = normalizeBounds(state.regionDraft.start, state.regionDraft.end);
       const topLeft = viewer.nativeToScreen([bounds[0], bounds[1]]);
       const bottomRight = viewer.nativeToScreen([bounds[2], bounds[3]]);
@@ -1114,9 +1137,12 @@
     $('overlayBadge').textContent = `${state.region} · 기준점 ${registration.controls.length} · 삼각형 ${registration.triangles.length}`;
     const addRegionButton = $('addRegionButton');
     addRegionButton.hidden = false;
-    addRegionButton.classList.toggle('drawing', state.regionDrawMode);
-    addRegionButton.textContent = state.regionDrawMode ? '사각형 지정 취소' : '구역 사각형 추가';
     const regionItem = currentRegion();
+    addRegionButton.classList.toggle('drawing', Boolean(state.regionDrawMode));
+    if (state.regionDrawMode === 'source') addRegionButton.textContent = '원본 사각형 지정 취소';
+    else if (state.regionDrawMode === 'target') addRegionButton.textContent = 'WTFMI 사각형 지정 취소';
+    else if (regionItem?.custom && !regionItem.targetPlacementConfirmed) addRegionButton.textContent = 'WTFMI 사각형 지정';
+    else addRegionButton.textContent = '구역 사각형 추가';
     const editor = $('customRegionEditor');
     editor.hidden = !regionItem?.custom;
     if (regionItem?.custom) {
@@ -1142,8 +1168,10 @@
       stat('매핑 마커', `${mappedCandidates.length}/${candidates.length}`, mappedCandidates.length === candidates.length)
     ].join('');
     const warnings = [];
-    if (registration.customRegion) warnings.push(['현재 사각형 내부에만 독립 Affine 정합이 적용됩니다.', 'info']);
-    if (!registration.ready) warnings.push([registration.customRegion ? '사각형 Affine 정합에 필요한 꼭짓점 대응점이 부족합니다.' : '삼각망 미리보기에 필요한 기준점이 부족합니다.', 'info']);
+    const targetPlacementMissing = regionItem?.custom && !regionItem.targetPlacementConfirmed;
+    if (targetPlacementMissing) warnings.push(['오른쪽 WTFMI 지도에서 대응 사각형을 직접 지정하세요. 지정 전에는 표시·정합되지 않습니다.', 'info']);
+    else if (registration.customRegion) warnings.push(['현재 사각형 내부에만 독립 Affine 정합이 적용됩니다.', 'info']);
+    if (!registration.ready && !targetPlacementMissing) warnings.push([registration.customRegion ? '사각형 Affine 정합에 필요한 꼭짓점 대응점이 부족합니다.' : '삼각망 미리보기에 필요한 기준점이 부족합니다.', 'info']);
     if (registration.controls.length < MIN_CONTROL_POINTS) warnings.push([`후보 좌표를 내보내려면 기준점을 ${MIN_CONTROL_POINTS}개 이상 추가해야 합니다.`, 'info']);
     if (validations.length < MIN_VALIDATION_POINTS) warnings.push([`계산에 사용하지 않는 검증점을 최소 ${MIN_VALIDATION_POINTS}개 추가해야 확정할 수 있습니다.`, 'info']);
     if (folded) warnings.push([`${folded}개 삼각형이 뒤집혔습니다. 해당 구역 마커는 제외됩니다.`, 'bad']);
@@ -1217,6 +1245,7 @@
           sourceBounds: project.customRegion.sourceBounds,
           targetGeometry: project.customRegion.targetGeometry || null,
           targetBounds: project.customRegion.targetBounds || null,
+          targetPlacementConfirmed: project.customRegion.targetPlacementConfirmed === true,
           cornerPointIds: project.customRegion.cornerPointIds || [],
           createdAt: project.customRegion.createdAt || new Date().toISOString()
         };
@@ -1562,9 +1591,10 @@
         return;
       }
       if (event.button !== 0) return;
-      if (side === 'source' && state.regionDrawMode) {
-        const native = clampToImage(this.screenToNative(screen), state.sourceImage);
-        this.regionDrag = { start: native, end: native };
+      if (side === state.regionDrawMode) {
+        const image = side === 'source' ? state.sourceImage : state.targetImage;
+        const native = clampToImage(this.screenToNative(screen), image);
+        this.regionDrag = { side, start: native, end: native };
         state.regionDraft = this.regionDrag;
         this.draw();
         return;
@@ -1617,7 +1647,8 @@
         this.view.y = this.drag.view.y + screen[1] - this.drag.screen[1];
         this.draw();
       } else if (this.regionDrag) {
-        this.regionDrag.end = clampToImage(this.screenToNative(screen), state.sourceImage);
+        const image = this.regionDrag.side === 'source' ? state.sourceImage : state.targetImage;
+        this.regionDrag.end = clampToImage(this.screenToNative(screen), image);
         state.regionDraft = this.regionDrag;
         renderAll();
       } else if (this.regionHandleDrag) {
@@ -1639,7 +1670,8 @@
       }
     });
     const endDrag = () => {
-      if (this.regionDrag) finishCustomRegion(this.regionDrag.start, this.regionDrag.end);
+      if (this.regionDrag?.side === 'source') finishCustomRegion(this.regionDrag.start, this.regionDrag.end);
+      if (this.regionDrag?.side === 'target') finishTargetRegion(this.regionDrag.start, this.regionDrag.end);
       if (this.regionHandleDrag) {
         const error = invalidRegionGeometry(this.regionHandleDrag.item, this.regionHandleDrag.side);
         if (error) {
