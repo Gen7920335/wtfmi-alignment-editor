@@ -17,6 +17,7 @@
     <label>맵<select id="mapSelect"></select></label>
     <label>층/패널<select id="floorSelect"></select></label>
     <label>정합 구역<select id="regionSelect"></select></label>
+    <label id="regionFloorTopLabel" hidden>사각형 층<select id="regionFloorTopSelect"></select></label>
     <button id="addRegionButton" class="region-only" type="button">구역 사각형 추가</button>
     <label>모델
       <select id="modelSelect">
@@ -74,7 +75,7 @@
           <label>이름 <input id="regionNameInput" type="text" maxlength="60"></label>
           <label>층 <select id="regionFloorSelect"></select></label>
           <button id="deleteRegionButton" class="danger" type="button">이 사각형 삭제</button>
-          <p class="hint">원본 사각형을 만든 뒤 WTFMI 지도에서도 대응 사각형을 직접 그려야 표시됩니다. 이후 층을 바꿔도 위치·크기·회전은 유지됩니다. WTFMI 사각형 내부 드래그는 전체 이동, 꼭짓점 1·2·3은 모양 조절입니다.</p>
+          <p class="hint">원본 지도에서 사각형을 드래그하면 곧바로 WTFMI 지도 입력으로 이어집니다. 오른쪽에서도 같은 방식으로 드래그해야 표시됩니다. 이후 상단의 사각형 층을 바꿔도 위치·크기·회전은 유지됩니다.</p>
         </section>
         <div id="statusGrid" class="status-grid"></div>
         <div id="warnings" class="warnings"></div>

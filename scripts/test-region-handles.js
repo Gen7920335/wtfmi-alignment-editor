@@ -7,6 +7,9 @@ if (source.includes("if (side === 'target' && item.floorId !== state.floor) cont
 if (!source.includes('if (registration.customRegion)') || !source.includes('regionAffine: true')) throw new Error('Rectangle-scoped affine mapping is missing');
 if (!source.includes('item.targetPlacementConfirmed ? (item.targetGeometry')) throw new Error('Unplaced target rectangles are not hidden');
 if (!source.includes("state.region = id; state.regionDrawMode = 'target'")) throw new Error('Source drawing does not hand off to target drawing');
+if (!source.includes("const targetPlacementPending = side === 'target'")) throw new Error('Target rectangle cannot be drawn directly without a button');
+if (!source.includes("addRegionButton.hidden = state.regionDrawMode === 'target'")) throw new Error('Target placement still exposes an extra button');
+if (!source.includes("$('regionFloorTopSelect').addEventListener")) throw new Error('Top-level rectangle floor control is missing');
 if (!source.includes('item.targetPlacementConfirmed = true;')) throw new Error('Target drawing is not confirmed explicitly');
 const floorChange = source.slice(source.indexOf('  async function changeCurrentRegionFloor'), source.indexOf('  async function deleteCurrentRegion'));
 if (floorChange.includes('item.targetGeometry = null') || floorChange.includes('item.targetBounds = null')) throw new Error('Floor change still deletes target placement');

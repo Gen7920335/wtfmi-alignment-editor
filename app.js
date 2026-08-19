@@ -148,6 +148,7 @@
     $('mapSelect').addEventListener('change', event => switchMap(event.target.value));
     $('floorSelect').addEventListener('change', event => switchFloor(event.target.value));
     $('regionSelect').addEventListener('change', event => switchRegion(event.target.value));
+    $('regionFloorTopSelect').addEventListener('change', event => changeCurrentRegionFloor(event.target.value));
     $('githubLoadButton').addEventListener('click', loadStateFromGithub);
     $('githubSaveButton').addEventListener('click', saveStateToGithub);
     $('githubUnlockButton').addEventListener('click', unlockGithubToken);
@@ -245,6 +246,7 @@
     if (storedRegion) {
       if (storedRegion.targetPlacementConfirmed) syncRegionCornerPoints(storedRegion);
       else {
+        state.regionDrawMode = 'target';
         state.points = state.points.filter(point => !(point.regionCorner && point.regionId === storedRegion.id));
         storedRegion.cornerPointIds = [];
       }
@@ -369,13 +371,11 @@
   }
 
   function toggleRegionDrawMode() {
-    if (state.regionDrawMode) state.regionDrawMode = null;
-    else state.regionDrawMode = currentRegion()?.custom && !currentRegion()?.targetPlacementConfirmed ? 'target' : 'source';
+    state.regionDrawMode = state.regionDrawMode === 'source' ? null : 'source';
     state.regionDraft = null;
     state.pendingSource = null;
     updateUi(); renderAll();
     if (state.regionDrawMode === 'source') toast('왼쪽 원본 지도에서 사용자 지정 구역을 드래그하세요.');
-    if (state.regionDrawMode === 'target') toast('오른쪽 WTFMI 지도에서 대응 사각형을 드래그하세요.');
   }
 
   function finishCustomRegion(start, end) {
@@ -1136,13 +1136,14 @@
     $('targetBadge').textContent = `${state.targetImage?.naturalWidth || 0} × ${state.targetImage?.naturalHeight || 0}`;
     $('overlayBadge').textContent = `${state.region} · 기준점 ${registration.controls.length} · 삼각형 ${registration.triangles.length}`;
     const addRegionButton = $('addRegionButton');
-    addRegionButton.hidden = false;
     const regionItem = currentRegion();
-    addRegionButton.classList.toggle('drawing', Boolean(state.regionDrawMode));
+    addRegionButton.hidden = state.regionDrawMode === 'target';
+    addRegionButton.classList.toggle('drawing', state.regionDrawMode === 'source');
     if (state.regionDrawMode === 'source') addRegionButton.textContent = '원본 사각형 지정 취소';
-    else if (state.regionDrawMode === 'target') addRegionButton.textContent = 'WTFMI 사각형 지정 취소';
-    else if (regionItem?.custom && !regionItem.targetPlacementConfirmed) addRegionButton.textContent = 'WTFMI 사각형 지정';
     else addRegionButton.textContent = '구역 사각형 추가';
+    const topFloorLabel = $('regionFloorTopLabel');
+    const topFloorSelect = $('regionFloorTopSelect');
+    topFloorLabel.hidden = !regionItem?.custom;
     const editor = $('customRegionEditor');
     editor.hidden = !regionItem?.custom;
     if (regionItem?.custom) {
@@ -1155,6 +1156,12 @@
         for (const floorItem of MAPS[state.map].floors) floorSelect.add(new Option(floorItem.label, floorItem.id));
       }
       floorSelect.value = regionItem.floorId;
+      const topOptionsKey = [...topFloorSelect.options].map(item => item.value).join('|');
+      if (topOptionsKey !== wantedKey) {
+        topFloorSelect.innerHTML = '';
+        for (const floorItem of MAPS[state.map].floors) topFloorSelect.add(new Option(floorItem.label, floorItem.id));
+      }
+      topFloorSelect.value = regionItem.floorId;
     }
     $('pendingText').textContent = state.pendingSource
       ? `원본 (${round(state.pendingSource[0])}, ${round(state.pendingSource[1])}) 선택됨 — 오른쪽에서 같은 지점을 클릭`
@@ -1169,7 +1176,7 @@
     ].join('');
     const warnings = [];
     const targetPlacementMissing = regionItem?.custom && !regionItem.targetPlacementConfirmed;
-    if (targetPlacementMissing) warnings.push(['오른쪽 WTFMI 지도에서 대응 사각형을 직접 지정하세요. 지정 전에는 표시·정합되지 않습니다.', 'info']);
+    if (targetPlacementMissing) warnings.push(['오른쪽 WTFMI 지도에서 대응 사각형을 드래그하세요. 드래그 전에는 표시·정합되지 않습니다.', 'info']);
     else if (registration.customRegion) warnings.push(['현재 사각형 내부에만 독립 Affine 정합이 적용됩니다.', 'info']);
     if (!registration.ready && !targetPlacementMissing) warnings.push([registration.customRegion ? '사각형 Affine 정합에 필요한 꼭짓점 대응점이 부족합니다.' : '삼각망 미리보기에 필요한 기준점이 부족합니다.', 'info']);
     if (registration.controls.length < MIN_CONTROL_POINTS) warnings.push([`후보 좌표를 내보내려면 기준점을 ${MIN_CONTROL_POINTS}개 이상 추가해야 합니다.`, 'info']);
@@ -1591,9 +1598,11 @@
         return;
       }
       if (event.button !== 0) return;
-      if (side === state.regionDrawMode) {
+      const targetPlacementPending = side === 'target' && currentRegion()?.custom && !currentRegion()?.targetPlacementConfirmed;
+      if (side === state.regionDrawMode || targetPlacementPending) {
         const image = side === 'source' ? state.sourceImage : state.targetImage;
         const native = clampToImage(this.screenToNative(screen), image);
+        state.regionDrawMode = side;
         this.regionDrag = { side, start: native, end: native };
         state.regionDraft = this.regionDrag;
         this.draw();
