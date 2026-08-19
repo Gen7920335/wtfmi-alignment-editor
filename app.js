@@ -442,7 +442,7 @@
     const dx = point[0] - item.geometry.center[0], dy = point[1] - item.geometry.center[1];
     const cos = Math.cos(item.geometry.angle), sin = Math.sin(item.geometry.angle);
     const x = dx * cos + dy * sin, y = -dx * sin + dy * cos;
-    return Math.abs(x) <= item.geometry.width / 2 + 1e-6 && Math.abs(y) <= item.geometry.height / 2 + 1e-6;
+    return Math.abs(x) <= Math.abs(item.geometry.width) / 2 + 1e-6 && Math.abs(y) <= Math.abs(item.geometry.height) / 2 + 1e-6;
   }
   function rotatedRectanglesOverlap(left, right) {
     const a = rotatedCorners(left), b = rotatedCorners(right);
@@ -462,28 +462,32 @@
   }
   function regionColor(item) { return `hsl(${((Number(item.colorIndex) || 0) * 137.508) % 360} 88% 66%)`; }
   function regionHandlePoints(geometry) {
-    const cos = Math.cos(geometry.angle), sin = Math.sin(geometry.angle);
+    const corners = rotatedCorners(geometry);
+    return { corner1: corners[0], corner2: corners[1], corner3: corners[2] };
+  }
+  function geometryFromThreeCorners(first, second, third) {
+    const dx = second[0] - first[0], dy = second[1] - first[1];
+    const width = Math.hypot(dx, dy);
+    if (width < 8) return null;
+    const axis = [dx / width, dy / width];
+    const normal = [-axis[1], axis[0]];
+    const signedHeight = (third[0] - second[0]) * normal[0] + (third[1] - second[1]) * normal[1];
+    if (Math.abs(signedHeight) < 8) return null;
     return {
-      center: [...geometry.center],
-      width: [geometry.center[0] + cos * geometry.width / 2, geometry.center[1] + sin * geometry.width / 2],
-      height: [geometry.center[0] - sin * geometry.height / 2, geometry.center[1] + cos * geometry.height / 2]
+      center: [first[0] + axis[0] * width / 2 + normal[0] * signedHeight / 2, first[1] + axis[1] * width / 2 + normal[1] * signedHeight / 2],
+      width,
+      height: signedHeight,
+      angle: Math.atan2(axis[1], axis[0])
     };
   }
   function updateRegionFromHandle(item, handleType, movingPoint, originalGeometry) {
-    if (handleType === 'center') {
-      item.geometry = { ...originalGeometry, center: [...movingPoint] };
-    } else if (handleType === 'width') {
-      const dx = movingPoint[0] - originalGeometry.center[0], dy = movingPoint[1] - originalGeometry.center[1];
-      const halfWidth = Math.hypot(dx, dy);
-      if (halfWidth < 4) return;
-      item.geometry = { ...originalGeometry, width: halfWidth * 2, angle: Math.atan2(dy, dx) };
-    } else if (handleType === 'height') {
-      const dx = movingPoint[0] - originalGeometry.center[0], dy = movingPoint[1] - originalGeometry.center[1];
-      const normal = [-Math.sin(originalGeometry.angle), Math.cos(originalGeometry.angle)];
-      const halfHeight = Math.abs(dx * normal[0] + dy * normal[1]);
-      if (halfHeight < 4) return;
-      item.geometry = { ...originalGeometry, height: halfHeight * 2 };
-    }
+    const handles = regionHandlePoints(originalGeometry);
+    if (handleType === 'corner1') handles.corner1 = [...movingPoint];
+    else if (handleType === 'corner2') handles.corner2 = [...movingPoint];
+    else if (handleType === 'corner3') handles.corner3 = [...movingPoint];
+    const geometry = geometryFromThreeCorners(handles.corner1, handles.corner2, handles.corner3);
+    if (!geometry) return;
+    item.geometry = geometry;
     item.sourceBounds = rotatedBounds(item.geometry).map(round3);
   }
 
@@ -732,15 +736,10 @@
     ctx.setLineDash([]);
     const nativeHandles = regionHandlePoints(geometry);
     const handles = [
-      { type: 'center', label: '중심', point: viewer.nativeToScreen(nativeHandles.center) },
-      { type: 'width', label: '방향·너비', point: viewer.nativeToScreen(nativeHandles.width) },
-      { type: 'height', label: '높이', point: viewer.nativeToScreen(nativeHandles.height) }
+      { type: 'corner1', label: '꼭짓점 1', point: viewer.nativeToScreen(nativeHandles.corner1) },
+      { type: 'corner2', label: '꼭짓점 2', point: viewer.nativeToScreen(nativeHandles.corner2) },
+      { type: 'corner3', label: '꼭짓점 3', point: viewer.nativeToScreen(nativeHandles.corner3) }
     ];
-    const center = handles[0].point;
-    ctx.strokeStyle = color; ctx.lineWidth = 1;
-    for (const handle of handles.slice(1)) {
-      ctx.beginPath(); ctx.moveTo(...center); ctx.lineTo(...handle.point); ctx.stroke();
-    }
     for (const handle of handles) {
       const point = handle.point;
       ctx.beginPath(); ctx.arc(point[0], point[1], 7, 0, Math.PI * 2); ctx.fillStyle = '#071015'; ctx.fill();
@@ -1585,7 +1584,7 @@
     const item = currentRegion();
     if (!item?.custom) return null;
     const handles = regionHandlePoints(item.geometry);
-    for (const handleType of ['center', 'width', 'height']) {
+    for (const handleType of ['corner1', 'corner2', 'corner3']) {
       if (distance(screen, this.nativeToScreen(handles[handleType])) <= 14) return { handleType };
     }
     return null;

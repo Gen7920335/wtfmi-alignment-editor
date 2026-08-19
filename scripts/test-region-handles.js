@@ -6,27 +6,33 @@ const start = source.indexOf('  function rotatedCorners');
 const end = source.indexOf('  function invalidRegionGeometry', start);
 if (start < 0 || end < 0) throw new Error('Region geometry functions not found');
 
-const factory = new Function('round3', `${source.slice(start, end)}\nreturn { regionHandlePoints, updateRegionFromHandle };`);
-const { regionHandlePoints, updateRegionFromHandle } = factory(value => Number(value.toFixed(3)));
+const factory = new Function('round3', `${source.slice(start, end)}\nreturn { rotatedCorners, regionHandlePoints, updateRegionFromHandle };`);
+const { rotatedCorners, regionHandlePoints, updateRegionFromHandle } = factory(value => Number(value.toFixed(3)));
 const base = { center: [100, 200], width: 80, height: 40, angle: Math.PI / 6 };
+const baseCorners = rotatedCorners(base);
 
-const centered = { geometry: structuredClone(base) };
-updateRegionFromHandle(centered, 'center', [300, 400], base);
-if (centered.geometry.center[0] !== 300 || centered.geometry.center[1] !== 400) throw new Error('Center handle did not move the rectangle');
-if (centered.geometry.angle !== base.angle || centered.geometry.width !== base.width || centered.geometry.height !== base.height) throw new Error('Center handle changed rotation or size');
+const movedFirst = { geometry: structuredClone(base) };
+const firstTarget = [baseCorners[0][0] - 20, baseCorners[0][1] + 10];
+updateRegionFromHandle(movedFirst, 'corner1', firstTarget, base);
+const movedFirstCorners = rotatedCorners(movedFirst.geometry);
+if (Math.hypot(movedFirstCorners[0][0] - firstTarget[0], movedFirstCorners[0][1] - firstTarget[1]) > 1e-9) throw new Error('Corner 1 did not follow the cursor');
+if (Math.hypot(movedFirstCorners[1][0] - baseCorners[1][0], movedFirstCorners[1][1] - baseCorners[1][1]) > 1e-9) throw new Error('Corner 2 should anchor corner 1 edits');
 
-const widened = { geometry: structuredClone(base) };
-updateRegionFromHandle(widened, 'width', [100, 260], base);
-if (Math.abs(widened.geometry.angle - Math.PI / 2) > 1e-12) throw new Error('Width handle rotation is incorrect');
-if (Math.abs(widened.geometry.width - 120) > 1e-12) throw new Error('Width handle size is incorrect');
-if (widened.geometry.height !== base.height || widened.geometry.center[0] !== base.center[0] || widened.geometry.center[1] !== base.center[1]) throw new Error('Width handle changed center or height');
+const movedSecond = { geometry: structuredClone(base) };
+const secondTarget = [baseCorners[0][0] + 100, baseCorners[0][1]];
+updateRegionFromHandle(movedSecond, 'corner2', secondTarget, base);
+const movedSecondCorners = rotatedCorners(movedSecond.geometry);
+if (Math.hypot(movedSecondCorners[0][0] - baseCorners[0][0], movedSecondCorners[0][1] - baseCorners[0][1]) > 1e-9) throw new Error('Corner 1 should anchor corner 2 edits');
+if (Math.hypot(movedSecondCorners[1][0] - secondTarget[0], movedSecondCorners[1][1] - secondTarget[1]) > 1e-9) throw new Error('Corner 2 did not follow the cursor');
 
-const heightened = { geometry: structuredClone(base) };
+const movedThird = { geometry: structuredClone(base) };
 const normal = [-Math.sin(base.angle), Math.cos(base.angle)];
-updateRegionFromHandle(heightened, 'height', [base.center[0] + normal[0] * 50, base.center[1] + normal[1] * 50], base);
-if (Math.abs(heightened.geometry.height - 100) > 1e-9) throw new Error('Height handle size is incorrect');
-if (heightened.geometry.angle !== base.angle || heightened.geometry.width !== base.width) throw new Error('Height handle changed rotation or width');
+const thirdTarget = [baseCorners[1][0] + normal[0] * 70, baseCorners[1][1] + normal[1] * 70];
+updateRegionFromHandle(movedThird, 'corner3', thirdTarget, base);
+const movedThirdCorners = rotatedCorners(movedThird.geometry);
+if (Math.hypot(movedThirdCorners[2][0] - thirdTarget[0], movedThirdCorners[2][1] - thirdTarget[1]) > 1e-9) throw new Error('Corner 3 did not follow the perpendicular cursor position');
+if (Math.abs(movedThird.geometry.angle - base.angle) > 1e-12 || Math.abs(movedThird.geometry.width - base.width) > 1e-9) throw new Error('Corner 3 changed the 1-2 baseline');
 
 const handles = regionHandlePoints(base);
-if (!handles.center || !handles.width || !handles.height || Object.keys(handles).length !== 3) throw new Error('Expected exactly three region handles');
-console.log('Region handles passed: center-only movement, width-only rotation, height-only scaling, exactly three handles');
+if (!handles.corner1 || !handles.corner2 || !handles.corner3 || Object.keys(handles).length !== 3) throw new Error('Expected exactly three corner handles');
+console.log('Region handles passed: three actual corners, stable 1-2 baseline, perpendicular corner 3');
