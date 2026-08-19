@@ -670,6 +670,10 @@
     drawImageNative(ctx, state.sourceImage, viewer.view, dpr);
     const model = calculateRegistration();
     if (!model.ready) return;
+    if (model.customRegion) {
+      if (model.reverseAffine) drawGlobalWarp(ctx, viewer, dpr, model.reverseAffine, state.opacity);
+      return;
+    }
     if (state.model === 'piecewise' && model.triangles.length) {
       if (state.allowGlobalFallback && model.reverseGlobal) drawGlobalWarp(ctx, viewer, dpr, model.reverseGlobal, state.opacity * 0.38);
       for (const triangle of model.triangles) {
@@ -683,8 +687,14 @@
 
   function drawGlobalWarp(ctx, viewer, dpr, reverse, alpha) {
     ctx.save();
-    const bounds = currentRegion()?.sourceBounds;
-    if (bounds) {
+    const region = currentRegion();
+    const geometry = region?.custom ? regionGeometry(region, 'source') : null;
+    if (geometry) {
+      const corners = rotatedCorners(geometry).map(point => viewer.nativeToScreen(point));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.beginPath(); ctx.moveTo(...corners[0]); for (const corner of corners.slice(1)) ctx.lineTo(...corner); ctx.closePath(); ctx.clip();
+    } else if (region?.sourceBounds) {
+      const bounds = region.sourceBounds;
       const topLeft = viewer.nativeToScreen([bounds[0], bounds[1]]);
       const bottomRight = viewer.nativeToScreen([bounds[2], bounds[3]]);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -853,9 +863,10 @@
   }
 
   function calculateRegistration() {
+    const customRegion = Boolean(currentRegion()?.custom);
     const controls = state.points.filter(point => point.enabled && point.type === 'control' && pointInsideCurrentRegion(point));
-    const minimum = state.model === 'similarity' ? 2 : 3;
-    const result = { ready: controls.length >= minimum, controls, triangles: [], forwardGlobal: null, reverseGlobal: null };
+    const minimum = customRegion ? 3 : state.model === 'similarity' ? 2 : 3;
+    const result = { ready: controls.length >= minimum, customRegion, controls, triangles: [], forwardGlobal: null, reverseGlobal: null };
     if (controls.length >= 2) {
       result.forwardSimilarity = fitSimilarity(controls.map(point => [point.source, point.target]));
       result.reverseSimilarity = fitSimilarity(controls.map(point => [point.target, point.source]));
@@ -864,19 +875,26 @@
       result.forwardAffine = fitAffine(controls.map(point => [point.source, point.target]));
       result.reverseAffine = fitAffine(controls.map(point => [point.target, point.source]));
     }
-    if (state.model === 'similarity') {
+    if (customRegion) {
+      result.forwardGlobal = result.forwardAffine;
+      result.reverseGlobal = result.reverseAffine;
+    } else if (state.model === 'similarity') {
       result.forwardGlobal = result.forwardSimilarity;
       result.reverseGlobal = result.reverseSimilarity;
     } else {
       result.forwardGlobal = result.forwardAffine;
       result.reverseGlobal = result.reverseAffine;
     }
-    if (controls.length >= 3) result.triangles = buildTriangles(controls);
+    if (!customRegion && controls.length >= 3) result.triangles = buildTriangles(controls);
     return result;
   }
 
   function mapSourceToTarget(point, registration) {
     if (!insideCurrentSourceRegion(point)) return null;
+    if (registration.customRegion) {
+      if (!registration.forwardAffine) return null;
+      return acceptCurrentTargetRegion({ point: applyAffine(registration.forwardAffine, point), triangle: null, fallback: false, regionAffine: true });
+    }
     if (state.model === 'piecewise' && registration.triangles.length) {
       for (let index = 0; index < registration.triangles.length; index++) {
         const triangle = registration.triangles[index];
@@ -1115,7 +1133,8 @@
       stat('매핑 마커', `${mappedCandidates.length}/${candidates.length}`, mappedCandidates.length === candidates.length)
     ].join('');
     const warnings = [];
-    if (!registration.ready) warnings.push(['삼각망 미리보기에 필요한 기준점이 부족합니다.', 'info']);
+    if (registration.customRegion) warnings.push(['현재 사각형 내부에만 독립 Affine 정합이 적용됩니다.', 'info']);
+    if (!registration.ready) warnings.push([registration.customRegion ? '사각형 Affine 정합에 필요한 꼭짓점 대응점이 부족합니다.' : '삼각망 미리보기에 필요한 기준점이 부족합니다.', 'info']);
     if (registration.controls.length < MIN_CONTROL_POINTS) warnings.push([`후보 좌표를 내보내려면 기준점을 ${MIN_CONTROL_POINTS}개 이상 추가해야 합니다.`, 'info']);
     if (validations.length < MIN_VALIDATION_POINTS) warnings.push([`계산에 사용하지 않는 검증점을 최소 ${MIN_VALIDATION_POINTS}개 추가해야 확정할 수 있습니다.`, 'info']);
     if (folded) warnings.push([`${folded}개 삼각형이 뒤집혔습니다. 해당 구역 마커는 제외됩니다.`, 'bad']);

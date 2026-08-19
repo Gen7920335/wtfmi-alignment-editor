@@ -3,12 +3,13 @@ const path = require('path');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
 if (source.includes('rotatedRectanglesOverlap') || source.includes('사각형과 겹칠 수 없습니다')) throw new Error('Rectangle overlap restriction remains');
+if (!source.includes('if (registration.customRegion)') || !source.includes('regionAffine: true')) throw new Error('Rectangle-scoped affine mapping is missing');
 const start = source.indexOf('  function rotatedCorners');
 const end = source.indexOf('  function invalidRegionGeometry', start);
 if (start < 0 || end < 0) throw new Error('Region geometry functions not found');
 
-const factory = new Function('round3', `${source.slice(start, end)}\nreturn { rotatedCorners, regionHandlePoints, updateRegionFromHandle };`);
-const { rotatedCorners, regionHandlePoints, updateRegionFromHandle } = factory(value => Number(value.toFixed(3)));
+const factory = new Function('round3', `${source.slice(start, end)}\nreturn { rotatedCorners, insideRegion, regionHandlePoints, updateRegionFromHandle };`);
+const { rotatedCorners, insideRegion, regionHandlePoints, updateRegionFromHandle } = factory(value => Number(value.toFixed(3)));
 const base = { center: [100, 200], width: 80, height: 40, angle: Math.PI / 6 };
 const baseCorners = rotatedCorners(base);
 
@@ -42,4 +43,8 @@ const targetCorner = rotatedCorners(base)[2];
 updateRegionFromHandle(dualSide, 'target', 'corner3', [targetCorner[0] + normal[0] * 30, targetCorner[1] + normal[1] * 30], base);
 if (JSON.stringify(dualSide.geometry) !== JSON.stringify(base)) throw new Error('Target handle changed source geometry');
 if (JSON.stringify(dualSide.targetGeometry) === JSON.stringify(base)) throw new Error('Target handle did not change target geometry');
-console.log('Region handles passed: three actual corners on both maps, stable 1-2 baseline, perpendicular corner 3');
+
+const rotated = { custom: true, geometry: { center: [100, 100], width: 100, height: 30, angle: Math.PI / 4 } };
+if (!insideRegion([100, 100], rotated)) throw new Error('Rectangle center should be inside');
+if (insideRegion([140, 60], rotated)) throw new Error('Point outside rotated rectangle leaked through its AABB');
+console.log('Region handles passed: independent overlap, three corners on both maps, affine mapping clipped to rotated interior');
