@@ -461,20 +461,29 @@
     });
   }
   function regionColor(item) { return `hsl(${((Number(item.colorIndex) || 0) * 137.508) % 360} 88% 66%)`; }
-  function updateRegionFromDiagonal(item, handleIndex, movingPoint, originalGeometry) {
-    const originalCorners = rotatedCorners(originalGeometry);
-    const first = handleIndex === 0 ? movingPoint : originalCorners[0];
-    const second = handleIndex === 2 ? movingPoint : originalCorners[2];
-    const dx = second[0] - first[0], dy = second[1] - first[1];
-    const diagonal = Math.hypot(dx, dy);
-    const originalDiagonal = Math.hypot(originalGeometry.width, originalGeometry.height) || 1;
-    if (diagonal < 12) return;
-    const scale = diagonal / originalDiagonal;
-    const width = originalGeometry.width * scale, height = originalGeometry.height * scale;
-    item.geometry = {
-      center: [(first[0] + second[0]) / 2, (first[1] + second[1]) / 2], width, height,
-      angle: Math.atan2(dy, dx) - Math.atan2(height, width)
+  function regionHandlePoints(geometry) {
+    const cos = Math.cos(geometry.angle), sin = Math.sin(geometry.angle);
+    return {
+      center: [...geometry.center],
+      width: [geometry.center[0] + cos * geometry.width / 2, geometry.center[1] + sin * geometry.width / 2],
+      height: [geometry.center[0] - sin * geometry.height / 2, geometry.center[1] + cos * geometry.height / 2]
     };
+  }
+  function updateRegionFromHandle(item, handleType, movingPoint, originalGeometry) {
+    if (handleType === 'center') {
+      item.geometry = { ...originalGeometry, center: [...movingPoint] };
+    } else if (handleType === 'width') {
+      const dx = movingPoint[0] - originalGeometry.center[0], dy = movingPoint[1] - originalGeometry.center[1];
+      const halfWidth = Math.hypot(dx, dy);
+      if (halfWidth < 4) return;
+      item.geometry = { ...originalGeometry, width: halfWidth * 2, angle: Math.atan2(dy, dx) };
+    } else if (handleType === 'height') {
+      const dx = movingPoint[0] - originalGeometry.center[0], dy = movingPoint[1] - originalGeometry.center[1];
+      const normal = [-Math.sin(originalGeometry.angle), Math.cos(originalGeometry.angle)];
+      const halfHeight = Math.abs(dx * normal[0] + dy * normal[1]);
+      if (halfHeight < 4) return;
+      item.geometry = { ...originalGeometry, height: halfHeight * 2 };
+    }
     item.sourceBounds = rotatedBounds(item.geometry).map(round3);
   }
 
@@ -707,7 +716,7 @@
       ctx.font = '700 11px "Segoe UI"';
       ctx.fillStyle = color;
       ctx.fillText(`#${item.displayIndex} · ${item.label} · ${item.floorLabel}`, points[0][0] + 4, points[0][1] - 6);
-      if (item.id === state.region && viewer.side === 'source') drawRegionHandles(ctx, points, color);
+      if (item.id === state.region && viewer.side === 'source') drawRegionHandles(ctx, item.geometry, viewer, color);
     }
     if (state.regionDraft) {
       const bounds = normalizeBounds(state.regionDraft.start, state.regionDraft.end);
@@ -719,14 +728,25 @@
     ctx.restore();
   }
 
-  function drawRegionHandles(ctx, corners, color) {
+  function drawRegionHandles(ctx, geometry, viewer, color) {
     ctx.setLineDash([]);
-    for (const [cornerIndex, label] of [[0, '대각 1'], [2, '대각 2']]) {
-      const point = corners[cornerIndex];
+    const nativeHandles = regionHandlePoints(geometry);
+    const handles = [
+      { type: 'center', label: '중심', point: viewer.nativeToScreen(nativeHandles.center) },
+      { type: 'width', label: '방향·너비', point: viewer.nativeToScreen(nativeHandles.width) },
+      { type: 'height', label: '높이', point: viewer.nativeToScreen(nativeHandles.height) }
+    ];
+    const center = handles[0].point;
+    ctx.strokeStyle = color; ctx.lineWidth = 1;
+    for (const handle of handles.slice(1)) {
+      ctx.beginPath(); ctx.moveTo(...center); ctx.lineTo(...handle.point); ctx.stroke();
+    }
+    for (const handle of handles) {
+      const point = handle.point;
       ctx.beginPath(); ctx.arc(point[0], point[1], 7, 0, Math.PI * 2); ctx.fillStyle = '#071015'; ctx.fill();
       ctx.lineWidth = 2; ctx.strokeStyle = color; ctx.stroke();
       ctx.font = '700 11px "Segoe UI"'; ctx.fillStyle = '#ffffff';
-      ctx.fillText(label, point[0] + 10, point[1] + (cornerIndex === 0 ? -8 : 14));
+      ctx.fillText(handle.label, point[0] + 10, point[1] - 8);
     }
     ctx.setLineDash([7, 5]);
   }
@@ -1470,7 +1490,7 @@
             const normalized = currentRegion();
             stored.geometry = structuredClone(normalized.geometry);
             stored.sourceBounds = structuredClone(normalized.sourceBounds);
-            this.regionHandleDrag = { item: stored, handleIndex: regionHandle.handleIndex, original: structuredClone(stored) };
+            this.regionHandleDrag = { item: stored, handleType: regionHandle.handleType, original: structuredClone(stored) };
             return;
           }
         }
@@ -1495,7 +1515,7 @@
         renderAll();
       } else if (this.regionHandleDrag) {
         const moving = clampToImage(this.screenToNative(screen), state.sourceImage);
-        updateRegionFromDiagonal(this.regionHandleDrag.item, this.regionHandleDrag.handleIndex, moving, this.regionHandleDrag.original.geometry);
+        updateRegionFromHandle(this.regionHandleDrag.item, this.regionHandleDrag.handleType, moving, this.regionHandleDrag.original.geometry);
         renderAll();
       } else if (this.pointDrag) {
         const image = this.pointDrag.coordinateSide === 'source' ? state.sourceImage : state.targetImage;
@@ -1564,9 +1584,9 @@
     if (this.side !== 'source') return null;
     const item = currentRegion();
     if (!item?.custom) return null;
-    const corners = rotatedCorners(item.geometry);
-    for (const handleIndex of [0, 2]) {
-      if (distance(screen, this.nativeToScreen(corners[handleIndex])) <= 14) return { handleIndex };
+    const handles = regionHandlePoints(item.geometry);
+    for (const handleType of ['center', 'width', 'height']) {
+      if (distance(screen, this.nativeToScreen(handles[handleType])) <= 14) return { handleType };
     }
     return null;
   };
