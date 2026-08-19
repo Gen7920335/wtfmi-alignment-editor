@@ -25,10 +25,15 @@ jobs:
         uses: actions/checkout@v6
       - name: Configure Pages
         uses: actions/configure-pages@v5
+      - name: Prepare versioned static site
+        run: |
+          mkdir _site
+          rsync -a --exclude '.git' --exclude '_site' ./ _site/
+          sed -i "s/__BUILD_VERSION__/${GITHUB_SHA}/g" _site/index.html
       - name: Upload static site
         uses: actions/upload-pages-artifact@v4
         with:
-          path: .
+          path: _site
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
